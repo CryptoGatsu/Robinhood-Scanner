@@ -699,7 +699,7 @@ async function getLogsChunk(params,from,to,depth){
 
 /* Find the biggest range the endpoint will actually serve, once per session. */
 async function probeLogRange(params,latest){
-  if(LOG_RANGE)return LOG_RANGE;
+  if(LOG_RANGE!==null)return LOG_RANGE;   /* 0 is a valid cached answer */
   for(const r of [2000,1000,500,200,50]){
     const from=Math.max(0,latest-r+1);
     try{
@@ -756,7 +756,7 @@ async function discoverTokens(){
   const hit=cacheGet('discover');if(hit)return hit;
   const latest=parseInt(await rpc('eth_blockNumber',[]),16);
   const filter={topics:[TOPIC_TRANSFER]};
-  const range=await probeLogRange(filter,latest);
+  const range=(LOG_RANGE!==null)?LOG_RANGE:await probeLogRange(filter,latest);
   let out;
   if(range>=500){
     const from=Math.max(0,latest-SCAN_BLOCKS);
@@ -864,36 +864,56 @@ async function marketFor(t){
 }
 
 /* price series from pool Sync events; falls back to transfer activity */
-async function priceSeries(token){
-  if(!token.pool){return{kind:'none'};}
-  const latest=parseInt(await rpc('eth_blockNumber',[]),16);
-  /* Pool logs are address-filtered, but this endpoint still caps range. Probe a
-     pool-scoped range first; if even that fails, we can't chart. Never storm. */
-  const syncFilter={address:token.pool,topics:[TOPIC_SYNC]};
-  const range=await probeLogRange(syncFilter,latest);
-  const from=Math.max(0,latest-Math.min(SCAN_BLOCKS, (range||500)*8));
-  let logs=[];
-  if(range>=125){ try{logs=await getLogsAdaptive(syncFilter,from,latest);}catch(e){logs=[];} }
-  if(logs.length>=2){
-    let t0=null;try{t0=addrWord(await call(token.pool,READ.token0));}catch(e){}
-    const tokenIs0=t0&&t0===token.addr.toLowerCase();
-    let qdec=18;
-    try{const q=tokenIs0?addrWord(await call(token.pool,READ.token1)):t0;
-      if(q)qdec=Number(toBig(await call(q,READ.decimals)))||18;}catch(e){}
-    const pts=[];
-    for(const l of logs){
-      const d=strip(l.data);if(d.length<128)continue;
-      const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
-      const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
-      if(base===0n)continue;
-      const S=10n**12n;
-      const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(qdec)));
-      const p=Number(scaled)/1e12;
-      if(isFinite(p)&&p>0)pts.push({x:parseInt(l.blockNumber,16),y:p});
-    }
-    if(pts.length>=2)return{kind:'price',pts};
+/* Pull logs from the explorer, not the RPC. This endpoint rejects eth_getLogs,
+   but Blockscout indexes logs and serves them over plain REST. */
+async function scoutLogs(address,maxPages){
+  let url='/api/v2/addresses/'+address+'/logs';
+  const out=[];
+  for(let page=0;page<(maxPages||3);page++){
+    let j=null;
+    try{j=await scout(url);}catch(e){break;}
+    if(!j||!j.items||!j.items.length)break;
+    out.push.apply(out,j.items);
+    const np=j.next_page_params;
+    if(!np)break;
+    const qs=Object.keys(np).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
+    url='/api/v2/addresses/'+address+'/logs?'+qs;
   }
-  return{kind:'none'};   /* no fake activity chart; honest empty state */
+  return out;
+}
+async function priceSeries(token){
+  if(!token.pool)return{kind:'none',reason:'no pool'};
+  const items=await scoutLogs(token.pool,3);
+  if(!items.length)return{kind:'none',reason:'no logs indexed'};
+
+  /* which side is our token? one cheap eth_call each, these work fine */
+  let t0=null,t1=null;
+  try{t0=addrWord(await call(token.pool,READ.token0));}catch(e){}
+  try{t1=addrWord(await call(token.pool,READ.token1));}catch(e){}
+  if(!t0||!t1)return{kind:'none',reason:'not a v2-style pool'};
+  const tokenIs0=(t0===token.addr.toLowerCase());
+  if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in pool'};
+  let qdec=18;
+  try{const q=tokenIs0?t1:t0;qdec=Number(toBig(await call(q,READ.decimals)))||18;}catch(e){}
+
+  const pts=[];
+  for(const l of items){
+    const t=(l.topics||[])[0];
+    if(!t||t.toLowerCase()!==TOPIC_SYNC)continue;
+    const d=strip(l.data);
+    if(d.length<128)continue;
+    const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
+    const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
+    if(base===0n)continue;
+    const S=10n**12n;
+    const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(qdec)));
+    const p=Number(scaled)/1e12;
+    const blk=Number(l.block_number);
+    if(isFinite(p)&&p>0&&isFinite(blk))pts.push({x:blk,y:p});
+  }
+  pts.sort((a,b)=>a.x-b.x);
+  if(pts.length<2)return{kind:'none',reason:'no reserve updates found'};
+  return{kind:'price',pts};
 }
 
 /* ===== render ===== */
@@ -998,7 +1018,8 @@ function buildChart(pts,W,H,pad){
 function fmtPrice(p){if(!isFinite(p)||p<=0)return '\u2014';return p>=1?p.toFixed(4):p.toPrecision(4);}
 function renderChart(host,series){
   if(!series||series.kind==='none'||!series.pts||series.pts.length<2){
-    host.innerHTML='<div class="cload">No on-chain price history yet \u2014 too few pool updates to draw a chart.</div>';return;}
+    const why=(series&&series.reason)||'too few pool updates';
+    host.innerHTML='<div class="cload">No price chart \u2014 '+esc(why)+'.<br><span style="opacity:.7">Charts need a v2-style pool with indexed reserve updates.</span></div>';return;}
   const isPrice=series.kind==='price',pts=series.pts,W=560,H=200,pad=16;
   const c=buildChart(pts,W,H,pad);
   const first=pts[0].y,last=pts[pts.length-1].y;
