@@ -3,93 +3,134 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RookScan — honeypot &amp; rug check for Robinhood Chain</title>
+<title>Robinhood Chain Scanner — honeypot &amp; rug check</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Spectral:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
   :root{
-    --ink:#0b1220;--ink-2:#111a2c;--ink-3:#18243a;--line:#243349;
-    --fg:#e8edf5;--fg-dim:#93a1b8;--fg-faint:#647089;
-    --amber:#f5a623;--amber-soft:#7a5a1e;
-    --pass:#4ec9a5;--warn:#f5a623;--fail:#f16a6a;--info:#6ea8fe;--unknown:#6b7891;--r:12px;
+    --bg:#000000;
+    --surface:#0e0f0e;
+    --surface-2:#161816;
+    --line:#232622;
+    --fg:#ffffff;
+    --fg-dim:#9aa09a;
+    --fg-faint:#666b66;
+    --green:#00c805;
+    --green-dim:#0a3a12;
+    --green-soft:rgba(0,200,5,.10);
+    --red:#ff5000;
+    --amber:#ffb800;
+    --blue:#5ac8fa;
+    --grey:#7a807a;
+    --r:12px;
   }
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
-  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#16233b 0%,transparent 60%),var(--ink);
-    color:var(--fg);font-family:'Inter',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
-  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:'Inter',-apple-system,'Helvetica Neue',sans-serif;
+    line-height:1.5;-webkit-font-smoothing:antialiased;letter-spacing:-.011em}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0}
   .wrap{max-width:600px;margin:0 auto;padding:0 16px 40px}
-  header{padding:28px 0 4px}
-  .brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .rook{font-family:'Spectral',serif;font-weight:600;font-size:26px;display:flex;align-items:center;gap:9px}
-  .rook .glyph{width:23px;height:23px;filter:drop-shadow(0 0 9px rgba(245,166,35,.35))}
-  .rook em{font-style:normal;color:var(--amber)}
-  .chainpill{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--amber);
-    border:1px solid var(--amber-soft);border-radius:100px;padding:3px 9px;background:rgba(245,166,35,.06)}
-  .tagline{color:var(--fg-dim);font-size:13.5px;margin-top:7px}
 
-  .panel{background:linear-gradient(180deg,var(--ink-2),#0e1626);border:1px solid var(--line);
-    border-radius:var(--r);padding:14px;margin-top:16px}
-  #addr{width:100%;background:var(--ink);color:var(--fg);border:1px solid var(--ink-3);border-radius:9px;
+  header{padding:26px 0 4px}
+  .brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .feather{width:22px;height:26px;flex:0 0 auto}
+  .name{font-size:20px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .unofficial{font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--fg-faint);border:1px solid var(--line);border-radius:4px;padding:3px 6px}
+  .tagline{color:var(--fg-dim);font-size:13.5px;margin-top:9px}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-top:16px}
+  #addr{width:100%;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:9px;
     padding:14px;font-family:'IBM Plex Mono',monospace;font-size:14px;margin-bottom:10px}
-  #addr:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 3px rgba(245,166,35,.12)}
+  #addr:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
   #addr::placeholder{color:var(--fg-faint)}
-  .btn{width:100%;background:var(--amber);color:#1a1206;border:none;border-radius:9px;padding:15px;
-    font-weight:700;font-size:15.5px;cursor:pointer;font-family:'Inter',sans-serif}
-  .btn:disabled{opacity:.6;cursor:progress}
-  details.adv{margin-top:11px}
-  details.adv summary{cursor:pointer;color:var(--fg-faint);font-size:12.5px;list-style:none}
-  details.adv summary::-webkit-details-marker{display:none}
-  details.adv summary::before{content:'\2699 ';}
-  #rpc,#scout{width:100%;background:var(--ink);color:var(--fg-dim);border:1px solid var(--ink-3);
-    border-radius:8px;padding:9px 11px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;margin-top:8px}
-  .lbl{font-size:11px;color:var(--fg-faint);margin-top:10px;display:block}
+  .btn{width:100%;background:var(--green);color:#000;border:none;border-radius:9px;padding:15px;
+    font-weight:700;font-size:15.5px;cursor:pointer;font-family:inherit;letter-spacing:-.01em}
+  .btn:disabled{opacity:.55;cursor:progress}
   .hint{color:var(--fg-faint);font-size:12px;margin-top:10px}
   .log{margin-top:12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--fg-dim);display:none}
-  .log.show{display:block}.log div{padding:1.5px 0}.log .ok{color:var(--pass)}.log .er{color:var(--fail)}
-  .err-box{display:none;margin-top:12px;background:rgba(241,106,106,.08);border:1px solid rgba(241,106,106,.3);
+  .log.show{display:block}.log div{padding:1.5px 0}.log .ok{color:var(--green)}.log .er{color:var(--red)}
+  .err-box{display:none;margin-top:12px;background:rgba(255,80,0,.08);border:1px solid rgba(255,80,0,.35);
     border-radius:9px;padding:12px 14px;font-size:13px}
-  .err-box.show{display:block}.err-box b{color:#ff9a9a}
+  .err-box.show{display:block}.err-box b{color:var(--red)}
 
   .verdict{display:none;margin-top:16px}
-  .verdict.show{display:block;animation:rise .35s ease both}
+  .verdict.show{display:block;animation:rise .3s ease both}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  .banner{border-radius:var(--r);padding:20px;border:1px solid var(--line);text-align:center}
-  .banner .big{font-family:'Spectral',serif;font-size:29px;font-weight:600;line-height:1.1}
-  .banner .sub{font-size:13.5px;margin-top:7px;opacity:.95}
-  .banner.avoid{background:rgba(241,106,106,.12);border-color:rgba(241,106,106,.4)}
-  .banner.avoid .big{color:#ff8f8f}
-  .banner.risky{background:rgba(245,166,35,.1);border-color:var(--amber-soft)}
+  .banner{border-radius:var(--r);padding:22px 18px;border:1px solid var(--line);text-align:center;background:var(--surface)}
+  .banner .big{font-size:28px;font-weight:800;line-height:1.1;letter-spacing:-.025em}
+  .banner .sub{font-size:13.5px;margin-top:8px;color:var(--fg-dim)}
+  .banner.avoid{border-color:rgba(255,80,0,.4);background:linear-gradient(180deg,rgba(255,80,0,.09),var(--surface))}
+  .banner.avoid .big{color:var(--red)}
+  .banner.risky{border-color:rgba(255,184,0,.35);background:linear-gradient(180deg,rgba(255,184,0,.07),var(--surface))}
   .banner.risky .big{color:var(--amber)}
-  .banner.unknown{background:rgba(107,120,145,.12);border-color:#3a4a63}.banner.unknown .big{color:#aab6cc}
-  .banner.ok{background:rgba(78,201,165,.1);border-color:rgba(78,201,165,.35)}.banner.ok .big{color:var(--pass)}
-  .token-line{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--fg-dim);margin-top:12px;text-align:center}
-  .token-line b{color:var(--fg)}
+  .banner.unknown{border-color:#333}.banner.unknown .big{color:#b9beb9}
+  .banner.ok{border-color:rgba(0,200,5,.4);background:linear-gradient(180deg,var(--green-soft),var(--surface))}
+  .banner.ok .big{color:var(--green)}
 
-  .modules{margin-top:12px;display:grid;gap:10px}
-  .mod{background:var(--ink-2);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  /* token card */
+  .tokcard{margin-top:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+  .tokrow{display:flex;align-items:center;gap:12px}
+  .tokicon{width:40px;height:40px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:var(--green);flex:0 0 auto;overflow:hidden}
+  .tokicon img{width:100%;height:100%;object-fit:cover}
+  .tokmeta{flex:1 1 auto;min-width:0}
+  .tokname{font-weight:600;font-size:15px}
+  .toksym{color:var(--fg-dim);font-size:12.5px}
+  .tokaddr{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--fg-faint);margin-top:2px;
+    display:flex;align-items:center;gap:6px;cursor:pointer}
+  .tokaddr:hover{color:var(--fg-dim)}
+  .links{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .links a{font-size:12px;font-weight:500;color:var(--fg-dim);text-decoration:none;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:100px;padding:6px 12px;transition:.15s}
+  .links a:hover{color:var(--green);border-color:var(--green-dim)}
+  .nolinks{font-size:12px;color:var(--fg-faint);margin-top:11px;line-height:1.5}
+
+  .modules{margin-top:10px;display:grid;gap:10px}
+  .mod{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
   .mod-h{display:flex;align-items:center;gap:11px;padding:15px 14px;cursor:pointer;user-select:none}
-  .mod-h:hover{background:var(--ink-3)}
-  .badge{font-size:20px;line-height:1;flex:0 0 auto}
-  .mod-title{flex:1 1 auto;font-weight:600;font-size:15.5px}
-  .mod-verdict{font-size:12.5px;font-weight:600;font-family:'IBM Plex Mono',monospace}
-  .mv-fail{color:#ff8f8f}.mv-warn{color:var(--amber)}.mv-pass{color:var(--pass)}.mv-unknown{color:var(--unknown)}
+  .mod-h:hover{background:var(--surface-2)}
+  .dotb{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .d-fail{background:var(--red);box-shadow:0 0 9px rgba(255,80,0,.6)}
+  .d-warn{background:var(--amber);box-shadow:0 0 9px rgba(255,184,0,.5)}
+  .d-pass{background:var(--green);box-shadow:0 0 9px rgba(0,200,5,.55)}
+  .d-unknown{background:#4a4f4a}
+  .mod-title{flex:1 1 auto;font-weight:600;font-size:15px}
+  .mod-verdict{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+  .mv-fail{color:var(--red)}.mv-warn{color:var(--amber)}.mv-pass{color:var(--green)}.mv-unknown{color:var(--grey)}
   .caret{color:var(--fg-faint);transition:transform .2s;font-size:11px}
   .mod.open .caret{transform:rotate(90deg)}
   .mod-body{display:none;padding:2px 14px 12px;border-top:1px solid var(--line)}
   .mod.open .mod-body{display:block}
-  .finding{padding:11px 0;border-bottom:1px dashed var(--ink-3)}.finding:last-child{border-bottom:none}
-  .fq{display:flex;gap:9px;align-items:baseline}
+  .finding{padding:11px 0;border-bottom:1px solid #17191700}
+  .finding+.finding{border-top:1px dashed var(--line)}
+  .fq{display:flex;gap:10px;align-items:baseline}
   .fq .q{flex:1 1 auto;font-size:14px;font-weight:500}
   .fq .a{font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;flex:0 0 auto;text-align:right}
-  .a.fail{color:#ff8f8f}.a.warn{color:var(--amber)}.a.pass{color:var(--pass)}.a.unknown{color:var(--unknown)}.a.info{color:var(--info)}
-  .fwhy{color:var(--fg-dim);font-size:12.5px;margin:4px 0 0 23px}
-  .ev{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--info);background:var(--ink);
-    border:1px solid var(--ink-3);border-radius:6px;padding:3px 7px;margin:6px 0 0 23px;display:inline-block;
-    word-break:break-all;max-width:calc(100% - 23px);white-space:pre-wrap}
-  footer{margin:24px 0 0;color:var(--fg-faint);font-size:11.5px;line-height:1.6}
+  .a.fail{color:var(--red)}.a.warn{color:var(--amber)}.a.pass{color:var(--green)}.a.unknown{color:var(--grey)}.a.info{color:var(--blue)}
+  .fwhy{color:var(--fg-dim);font-size:12.5px;margin-top:4px}
+  .ev{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--fg-faint);background:#000;
+    border:1px solid var(--line);border-radius:6px;padding:3px 7px;margin-top:6px;display:inline-block;
+    word-break:break-all;max-width:100%;white-space:pre-wrap}
+
+  /* bubble map */
+  .bubblewrap{padding:6px 0 2px}
+  #bubbles{width:100%;height:auto;display:block;touch-action:manipulation}
+  .bub{cursor:pointer;transition:opacity .15s}
+  .bub:hover circle{stroke-width:2.4}
+  .blegend{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--fg-dim)}
+  .blegend span{display:flex;align-items:center;gap:5px}
+  .blegend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .btip{margin-top:10px;background:#000;border:1px solid var(--line);border-radius:8px;padding:9px 11px;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--fg-dim);min-height:34px;word-break:break-all}
+  .btip b{color:var(--fg)}
+  .btip a{color:var(--green);text-decoration:none}
+
+  footer{margin:22px 0 0;color:var(--fg-faint);font-size:11.5px;line-height:1.65}
   footer b{color:var(--fg-dim)}
-  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(26,18,6,.3);
-    border-top-color:#1a1206;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  .disclaimer{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);color:#5c615c}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.25);
+    border-top-color:#000;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
@@ -98,11 +139,12 @@
 <div class="wrap">
   <header>
     <div class="brand">
-      <div class="rook">
-        <svg class="glyph" viewBox="0 0 24 24"><path d="M4 21h16v-2l-2-1v-6h-2v3h-2V9h2V6h-2V3h-2v3H8V3H6v3h2v3H6v3H4v6l-2 1v2z" fill="#f5a623"/></svg>
-        Rook<em>Scan</em>
-      </div>
-      <span class="chainpill">Robinhood Chain</span>
+      <svg class="feather" viewBox="0 0 22 26" fill="none" aria-hidden="true">
+        <path d="M4 25V9C4 4.5 8 1 13 1c2.5 0 4.5.8 6 2-3 1.5-5 4-5 7.5V25" stroke="#00c805" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 15c3-2 6-2.5 9-2" stroke="#00c805" stroke-width="1.6" stroke-linecap="round" opacity=".6"/>
+      </svg>
+      <div class="name">Robinhood Chain Scanner</div>
+      <span class="unofficial">Unofficial</span>
     </div>
     <p class="tagline">Three questions before you buy: can you sell it, who holds it, and is the liquidity locked.</p>
   </header>
@@ -110,14 +152,7 @@
   <div class="panel">
     <input id="addr" class="mono" placeholder="0x\u2026 paste token address" autocomplete="off" spellcheck="false" />
     <button id="scan" class="btn">Check this token</button>
-    <details class="adv">
-      <summary>Advanced (endpoints)</summary>
-      <span class="lbl">RPC (read-only \u2014 nothing is signed)</span>
-      <input id="rpc" class="mono" value="https://robinhood-mainnet.g.alchemy.com/v2/bmmd7FRjvUwPIqLwtMOot" />
-      <span class="lbl">Blockscout API base</span>
-      <input id="scout" class="mono" value="https://robinhoodchain.blockscout.com" />
-    </details>
-    <div class="hint">Reads public data only. Never asks you to connect a wallet, sign, or send anything.</div>
+    <div class="hint">Reads public blockchain data only. Never asks you to connect a wallet, sign, or send anything.</div>
     <div class="err-box" id="errbox"></div>
   </div>
 
@@ -127,18 +162,37 @@
     <div class="banner" id="banner">
       <div class="big" id="vbig">\u2014</div>
       <div class="sub" id="vsub"></div>
-      <div class="token-line" id="vtoken"></div>
     </div>
+
+    <div class="tokcard" id="tokcard">
+      <div class="tokrow">
+        <div class="tokicon" id="tokicon">?</div>
+        <div class="tokmeta">
+          <div class="tokname" id="tokname">\u2014</div>
+          <div class="toksym" id="toksym"></div>
+          <div class="tokaddr mono" id="tokaddr" title="Tap to copy"></div>
+        </div>
+      </div>
+      <div class="links" id="links"></div>
+      <div class="nolinks" id="nolinks"></div>
+    </div>
+
     <div class="modules" id="modules"></div>
+
     <footer>
-      <b>Read this.</b> RookScan reads public data and runs a live transfer simulation. It catches most obvious traps, but no scanner is perfect and a determined scammer can hide things \u2014 a green result is not a guarantee. Brand-new tokens are high risk by default. Always test with a tiny amount first. Not financial advice.
+      <b>Read this.</b> This tool reads public data and runs a live transfer simulation. It catches most obvious traps, but no scanner is perfect and a determined scammer can hide things \u2014 a green result is not a guarantee. Brand-new tokens are high risk by default. Always test with a tiny amount first. Not financial advice.
+      <div class="disclaimer">Independent, community-built tool. <b>Not affiliated with, endorsed by, or operated by Robinhood Markets, Inc.</b> \u201cRobinhood\u201d is used only to identify the public blockchain being scanned.</div>
     </footer>
   </div>
 </div>
 
 <script>
 "use strict";
-/* keccak-256 (verified against known vectors) */
+/* ===== hardcoded endpoints ===== */
+const RPC='https://robinhood-mainnet.g.alchemy.com/v2/bmmd7FRjvUwPIqLwtMOot';
+const SCOUT='https://robinhoodchain.blockscout.com';
+
+/* ===== keccak-256 (verified against known test vectors) ===== */
 const _M=(1n<<64n)-1n;
 const _RC=[0x1n,0x8082n,0x800000000000808an,0x8000000080008000n,0x808bn,0x80000001n,0x8000000080008081n,0x8000000000008009n,0x8an,0x88n,0x80008009n,0x8000000an,0x8000808bn,0x800000000000008bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x800an,0x800000008000000an,0x8000000080008081n,0x8000000000008080n,0x80000001n,0x8000000080008008n];
 const _R=[0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
@@ -147,22 +201,20 @@ function _kf(A){for(let r=0;r<24;r++){const C=[0n,0n,0n,0n,0n],D=[0n,0n,0n,0n,0n
 function keccak(bytes){const A=new Array(25).fill(0n),rate=136;const p=new Uint8Array(Math.ceil((bytes.length+1)/rate)*rate);p.set(bytes);p[bytes.length]^=0x01;p[p.length-1]^=0x80;for(let off=0;off<p.length;off+=rate){for(let i=0;i<rate/8;i++){let l=0n;for(let b=7;b>=0;b--)l=(l<<8n)|BigInt(p[off+i*8+b]);A[i]^=l;}_kf(A);}let o='';for(let i=0;i<4;i++){let l=A[i];for(let b=0;b<8;b++){o+=(l&0xffn).toString(16).padStart(2,'0');l>>=8n;}}return o;}
 const kstr=s=>keccak(new TextEncoder().encode(s));
 
-/* selectors (verified) */
-const SEL={owner:'8da5cb5b',mint:'40c10f19',pause:'8456cb59',blacklist:'f9f92be4',setBlacklist:'153b0d1e',addBlackList:'0ecb93c0',setFee:'69fe0e2d',setFees:'0b78f9c0',setTaxes:'c647b20e',setMaxTx:'ec28438a',setMaxWallet:'27a14fc2',setCooldown:'5932ead1'};
-const READ={name:'06fdde03',symbol:'95d89b41',decimals:'313ce567',totalSupply:'18160ddd',owner:'8da5cb5b',balanceOf:'70a08231',token0:'0dfe1681',token1:'d21220a7',getReserves:'0902f1ac'};
+const SEL={owner:'8da5cb5b',mint:'40c10f19',pause:'8456cb59',blacklist:'f9f92be4',setBlacklist:'153b0d1e',addBlackList:'0ecb93c0',setFee:'69fe0e2d',setFees:'0b78f9c0',setTaxes:'c647b20e',setMaxTx:'ec28438a',setMaxWallet:'27a14fc2'};
+const READ={name:'06fdde03',symbol:'95d89b41',decimals:'313ce567',totalSupply:'18160ddd',owner:'8da5cb5b',balanceOf:'70a08231',token0:'0dfe1681',token1:'d21220a7'};
 const TRANSFER_SEL='a9059cbb';
 const EIP1967_IMPL='0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
 const ZERO='0x0000000000000000000000000000000000000000';
 const DEAD='0x000000000000000000000000000000000000dead';
-/* known LP lockers on this chain go here; empty until confirmed on 4663 */
 const LOCKERS=[];
 
-let RPC,SCOUT,_id=1;
-async function rpc(m,p){const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:_id++,method:m,params:p})});if(!r.ok)throw new Error(m+' HTTP '+r.status);const j=await r.json();if(j.error)throw new Error(m+': '+(j.error.message||'')); return j.result;}
+let _id=1;
+async function rpc(m,p){const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:_id++,method:m,params:p})});if(!r.ok)throw new Error(m+' HTTP '+r.status);const j=await r.json();if(j.error)throw new Error(m+': '+(j.error.message||''));return j.result;}
 const call=(to,data,from)=>rpc('eth_call',[Object.assign({to,data:'0x'+data},from?{from}:{}),'latest']);
 const getCode=a=>rpc('eth_getCode',[a,'latest']);
 const getStorage=(a,s)=>rpc('eth_getStorageAt',[a,s,'latest']);
-async function scout(path){const r=await fetch(SCOUT.replace(/\/$/,'')+path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error('explorer HTTP '+r.status);return r.json();}
+async function scout(p){const r=await fetch(SCOUT+p,{headers:{accept:'application/json'}});if(!r.ok)throw new Error('explorer HTTP '+r.status);return r.json();}
 
 const strip=h=>h&&h.startsWith('0x')?h.slice(2):(h||'');
 function decodeString(hex){hex=strip(hex);if(hex.length<128){let s='';for(let i=0;i<hex.length;i+=2){const c=parseInt(hex.slice(i,i+2),16);if(c>0)s+=String.fromCharCode(c);}return s.trim();}try{const off=parseInt(hex.slice(0,64),16)*2,len=parseInt(hex.slice(off,off+64),16)*2,d=hex.slice(off+64,off+64+len);let s='';for(let i=0;i<d.length;i+=2)s+=String.fromCharCode(parseInt(d.slice(i,i+2),16));return s.replace(/\u0000/g,'').trim();}catch(e){return '';}}
@@ -173,6 +225,7 @@ const pad32=n=>n.toString(16).padStart(64,'0');
 const fmtPct=n=>(n<10?n.toFixed(2):n.toFixed(1))+'%';
 function fmtAmt(v,dec){const d=dec||18;let s=v.toString();if(s.length<=d)s='0'.repeat(d-s.length+1)+s;return Number(s.slice(0,s.length-d)).toLocaleString();}
 const short=a=>a.slice(0,7)+'\u2026'+a.slice(-5);
+const esc=s=>String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
 const $=id=>document.getElementById(id);
 const logEl=$('log');
@@ -180,48 +233,45 @@ function log(m,c){logEl.classList.add('show');const d=document.createElement('di
 function clearLog(){logEl.innerHTML='';logEl.classList.remove('show');}
 function showErr(h){$('errbox').innerHTML=h;$('errbox').classList.add('show');}
 function hideErr(){$('errbox').classList.remove('show');}
-const IC={fail:'\uD83D\uDD34',warn:'\uD83D\uDFE0',pass:'\uD83D\uDFE2',unknown:'\u26AA',info:'\uD83D\uDD35'};
 function F(sev,q,a,why,ev){return{sev,q,a,why,ev};}
 
-/* ===== HONEYPOT: can you sell it? ===== */
-async function modHoneypot(addr,pool,sampleHolder,dec){
+/* ===== 1. HONEYPOT ===== */
+async function modHoneypot(addr,pool,sampleHolder){
   const f=[];let unknown=false;
   const code=await getCode(addr);
   if(!code||code==='0x')return{id:'sell',title:'Can you sell it?',status:'fail',findings:[F('fail','Is there a real token here?','No','Nothing is deployed at this address.')]};
   const rt=strip(code),has=s=>rt.includes(s);
-
   if(sampleHolder){
-    const rand='0x'+kstr('rookscan-'+Date.now()).slice(0,40),amt=pad32(1n);
+    const rand='0x'+kstr('rhscan-'+Date.now()).slice(0,40),amt=pad32(1n);
     let w=null,p=null;
     try{await call(addr,TRANSFER_SEL+padAddr(rand)+amt,sampleHolder);w=true;}catch(e){w=false;}
     if(pool){try{await call(addr,TRANSFER_SEL+padAddr(pool)+amt,sampleHolder);p=true;}catch(e){p=false;}}
-    if(w&&pool&&p===false)f.push(F('fail','Honeypot test','FAILED \u2014 can\u2019t sell','A holder can move the token to a normal wallet, but sending it into the trading pool (what selling does) is rejected. Classic honeypot: you can buy, not sell.','holder\u2192wallet \u2713  holder\u2192pool \u2717'));
+    if(w&&pool&&p===false)f.push(F('fail','Honeypot test','FAILED \u2014 can\u2019t sell','A holder can move the token to a normal wallet, but sending it into the trading pool (what selling does) is rejected. Classic honeypot: you can buy, not sell.','holder\u2192wallet \u2713   holder\u2192pool \u2717'));
     else if(w===false)f.push(F('fail','Honeypot test','Transfers frozen','A normal holder can\u2019t even move this token right now.','transfer() reverted'));
-    else if(w)f.push(F('pass','Honeypot test','Passed \u2014 sellable','A real holder moved the token'+(pool?' and into the pool':'')+' in a live simulation. Selling isn\u2019t blocked at the wallet level.',pool?'holder\u2192wallet \u2713  holder\u2192pool \u2713':'holder\u2192wallet \u2713'));
+    else if(w)f.push(F('pass','Honeypot test','Passed \u2014 sellable','A real holder moved the token'+(pool?' and into the pool':'')+' in a live simulation. Selling isn\u2019t blocked.',pool?'holder\u2192wallet \u2713   holder\u2192pool \u2713':'holder\u2192wallet \u2713'));
   }else{unknown=true;f.push(F('unknown','Honeypot test','Couldn\u2019t run','No holder with a balance to simulate from \u2014 usually means no real trading yet.'));}
 
   let owner=null;try{const a=addrWord(await call(addr,SEL.owner));if(a&&a!=='0x')owner=a;}catch(e){}
   let proxy=false,impl=null;try{const a=addrWord(await getStorage(addr,EIP1967_IMPL));if(a!==ZERO){proxy=true;impl=a;}}catch(e){}
-  if(proxy)f.push(F('fail','Can the team rewrite the token?','Yes','Code sits behind an upgradeable proxy \u2014 rules can change any time.','proxy \u2192 '+short(impl)));
+  if(proxy)f.push(F('fail','Can the team rewrite the token?','Yes','Code sits behind an upgradeable proxy \u2014 the rules can change at any time.','proxy \u2192 '+short(impl)));
   if(has(SEL.mint))f.push(F('fail','Can they print more tokens?','Yes','A mint function exists \u2014 supply can be inflated to crush the price.'));
   if(has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist))f.push(F('fail','Can they freeze your wallet?','Yes','A blacklist function exists \u2014 wallets can be blocked from selling.'));
   if(has(SEL.pause))f.push(F('warn','Can they pause all trading?','Yes','A pause switch exists.'));
-  if(has(SEL.setFees)||has(SEL.setTaxes)||has(SEL.setFee))f.push(F('warn','Can the tax change after you buy?','Yes','A fee-setter exists \u2014 buy/sell tax can be raised later. (Exact % needs a full swap sim.)'));
+  if(has(SEL.setFees)||has(SEL.setTaxes)||has(SEL.setFee))f.push(F('warn','Can the tax change after you buy?','Yes','A fee-setter exists \u2014 buy/sell tax can be raised later.'));
   if(has(SEL.setMaxTx)||has(SEL.setMaxWallet))f.push(F('warn','Can they shrink your max sell?','Yes','A max-transaction limit can be lowered toward zero.'));
   if(owner){if(owner===ZERO||owner===DEAD)f.push(F('pass','Who controls it?','Nobody','Ownership is renounced \u2014 the risky switches can\u2019t be flipped.'));else f.push(F('warn','Who controls it?','One wallet','A single owner still controls this token.','owner \u2192 '+short(owner)));}
   if(!f.some(x=>['fail','warn'].includes(x.sev))&&!proxy)f.push(F('pass','Hidden owner switches?','None found','No mint, freeze, pause, or tax-change switches in the code.'));
-
-  let status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':(unknown&&!f.some(x=>x.sev==='pass'))?'unknown':'pass';
+  const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':(unknown&&!f.some(x=>x.sev==='pass'))?'unknown':'pass';
   return{id:'sell',title:'Can you sell it?',status,findings:f};
 }
 
-/* ===== CONCENTRATION: who holds it? ===== */
+/* ===== 2. HOLDERS + bubble data ===== */
 async function modHolders(addr,dec){
   let info=null,holders=null,creator=null;
   try{info=await scout('/api/v2/tokens/'+addr);}catch(e){}
   try{holders=(await scout('/api/v2/tokens/'+addr+'/holders')).items;}catch(e){}
   try{const a=await scout('/api/v2/addresses/'+addr);creator=(a.creator_address_hash||'').toLowerCase()||null;}catch(e){}
-  if(!holders||!holders.length)return{id:'holders',title:'Who holds it?',status:'unknown',pool:null,sampleHolder:null,findings:[F('unknown','How spread out is ownership?','Can\u2019t tell yet','Explorer returned no holders \u2014 usually a brand-new token. Treat as high risk.')]};
+  if(!holders||!holders.length)return{id:'holders',title:'Who holds it?',status:'unknown',pool:null,sampleHolder:null,bubbles:null,findings:[F('unknown','How spread out is ownership?','Can\u2019t tell yet','The explorer returned no holders \u2014 usually a brand-new token. Treat as high risk.')]};
 
   const total=info&&info.total_supply?BigInt(info.total_supply):holders.reduce((s,h)=>s+BigInt(h.value),0n);
   const count=info&&info.holders?Number(info.holders):holders.length;
@@ -233,73 +283,142 @@ async function modHolders(addr,dec){
   const poolSet=new Set(pool?[pool]:[]);
   const wallets=rows.filter(r=>!sys.has(r.addr)&&!poolSet.has(r.addr));
   const sampleHolder=(wallets.find(r=>!r.isC)||wallets[0]||rows[0]||{}).addr||null;
-  const f=[];
 
-  if(creator){const cr=rows.find(r=>r.addr===creator);const cp=cr?pct(cr.val):0;f.push(F(cp>=5?'warn':'pass','How much does the creator hold?',fmtPct(cp),cp>=5?'The creator still holds a meaningful chunk they could dump.':'The creator wallet holds little or none.',short(creator)));}
+  const f=[];
+  if(creator){const cr=rows.find(r=>r.addr===creator);const cp=cr?pct(cr.val):0;
+    f.push(F(cp>=5?'warn':'pass','How much does the creator hold?',fmtPct(cp),cp>=5?'The creator still holds a meaningful chunk they could dump on you.':'The creator wallet holds little or none.',short(creator)));}
   if(wallets.length){
     const t1=pct(wallets[0].val);
     f.push(F(t1>=30?'fail':t1>=5?'warn':'pass','Biggest wallet holds',fmtPct(t1),t1>=30?'One wallet could crash the price in a single sell.':t1>=5?'One wallet holds a sizable share.':'No single wallet dominates.',short(wallets[0].addr)+' \u00b7 '+fmtAmt(wallets[0].val,dec)));
     let cum=0n;for(let i=0;i<10&&i<wallets.length;i++)cum+=wallets[i].val;const t10=pct(cum);
-    f.push(F(t10>=70?'fail':t10>=45?'warn':'pass','Top 10 wallets hold',fmtPct(t10),t10>=70?'A handful of wallets control almost everything.':t10>=45?'Top 10 hold a large share \u2014 stay cautious.':'Ownership is spread across many wallets.',count.toLocaleString()+' holders total'));
+    f.push(F(t10>=70?'fail':t10>=45?'warn':'pass','Top 10 wallets hold',fmtPct(t10),t10>=70?'A handful of wallets control almost everything.':t10>=45?'The top 10 hold a large share \u2014 stay cautious.':'Ownership is spread across many wallets.',count.toLocaleString()+' holders total'));
   }
-  let status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
-  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,findings:f};
+  const bubbles=rows.slice(0,22).map(r=>({addr:r.addr,pct:pct(r.val),val:r.val,
+    kind: r.addr===pool?'pool' : (creator&&r.addr===creator)?'creator' : sys.has(r.addr)?'burn' : r.isC?'contract' : pct(r.val)>=5?'whale':'holder'}));
+  const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
+  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,bubbles,creator,dec,findings:f};
 }
 
-/* ===== LIQUIDITY: is it locked/burned? ===== */
+/* ===== 3. LIQUIDITY ===== */
 async function modLiquidity(addr,pool,dec){
   const f=[];
-  if(!pool)return{id:'lp',title:'Is the liquidity locked?',status:'unknown',findings:[F('unknown','Where\u2019s the liquidity?','Couldn\u2019t find a pool','No pool showed up in the holder list \u2014 there may be little or no liquidity yet, which is itself risky.')]};
-
-  // is `pool` a v2-style fungible-LP pair? probe token0()/token1()
-  let isV2=false,t0=null,t1=null;
-  try{t0=addrWord(await call(pool,READ.token0));t1=addrWord(await call(pool,READ.token1));if(t0!==ZERO&&t1!==ZERO)isV2=true;}catch(e){}
-
-  // how deep is the pool (token side)
+  if(!pool)return{id:'lp',title:'Is the liquidity locked?',status:'unknown',findings:[F('unknown','Where\u2019s the liquidity?','No pool found','No pool showed up in the holder list \u2014 there may be little or no liquidity, which is itself risky.')]};
+  let isV2=false;
+  try{const t0=addrWord(await call(pool,READ.token0)),t1=addrWord(await call(pool,READ.token1));if(t0!==ZERO&&t1!==ZERO)isV2=true;}catch(e){}
   let poolTok=0n;try{poolTok=toBig(await call(addr,READ.balanceOf+padAddr(pool)));}catch(e){}
-
   if(isV2){
-    // LP token = the pair itself (ERC20). burned/locked = balance at dead/zero/lockers / totalSupply
-    let lpSupply=0n,dead=0n,zero=0n,locked=0n;
-    try{lpSupply=toBig(await call(pool,READ.totalSupply));}catch(e){}
+    let sup=0n,dead=0n,zero=0n,locked=0n;
+    try{sup=toBig(await call(pool,READ.totalSupply));}catch(e){}
     try{dead=toBig(await call(pool,READ.balanceOf+padAddr(DEAD)));}catch(e){}
     try{zero=toBig(await call(pool,READ.balanceOf+padAddr(ZERO)));}catch(e){}
     for(const L of LOCKERS){try{locked+=toBig(await call(pool,READ.balanceOf+padAddr(L)));}catch(e){}}
-    if(lpSupply>0n){
-      const secured=dead+zero+locked;
-      const p=Number(secured*10000n/lpSupply)/100;
-      const burnedP=Number((dead+zero)*10000n/lpSupply)/100;
+    if(sup>0n){
+      const secured=dead+zero+locked,p=Number(secured*10000n/sup)/100,bp=Number((dead+zero)*10000n/sup)/100;
       f.push(F(p>=95?'pass':p>=50?'warn':'fail','Is the LP burned or locked?',fmtPct(p)+' secured',
-        p>=95?'Almost all the liquidity is burned or locked \u2014 the team can\u2019t easily pull it out from under you.':p>=50?'Some liquidity is secured, but a large slice can still be pulled.':'Most of the liquidity is NOT burned or locked \u2014 the team can remove it and leave holders with nothing. This is the #1 rug pattern.',
-        'burned '+fmtPct(burnedP)+(locked>0n?' + locked':'')+' of LP'));
-    }else{
-      f.push(F('unknown','Is the LP burned or locked?','Can\u2019t read LP','Found a v2-style pool but couldn\u2019t read its LP supply.',short(pool)));
-    }
+        p>=95?'Almost all liquidity is burned or locked \u2014 the team can\u2019t pull it out from under you.':p>=50?'Some liquidity is secured, but a large slice can still be pulled.':'Most liquidity is NOT burned or locked. The team can remove it and leave holders with nothing. This is the #1 rug pattern.',
+        'burned '+fmtPct(bp)+(locked>0n?' + locked':'')+' of LP'));
+    }else f.push(F('unknown','Is the LP burned or locked?','Can\u2019t read LP','Found a v2-style pool but couldn\u2019t read its LP supply.',short(pool)));
   }else{
-    // v3/v4: NFT positions, no fungible LP to burn
-    f.push(F('info','Is the LP burned or locked?','N/A on this pool','This looks like a Uniswap v3/v4 pool, where liquidity is a position NFT \u2014 there\u2019s no fungible \u201cLP token\u201d to burn. What matters here is depth and who owns the position. A full lock check needs the position-manager lookup (server step).',short(pool)));
+    f.push(F('info','Is the LP burned or locked?','N/A on this pool','This looks like a Uniswap v3/v4 pool, where liquidity is a position NFT \u2014 there is no fungible \u201cLP token\u201d to burn. What matters here is depth and who owns the position.',short(pool)));
   }
-  f.push(F(poolTok>0n?'info':'warn','How deep is the pool?',poolTok>0n?fmtAmt(poolTok,dec)+' tokens':'thin/empty',poolTok>0n?'This is roughly what you\u2019d trade against. Very shallow pools mean wild price swings and easy manipulation.':'The pool holds almost none of the token \u2014 expect extreme slippage.',short(pool)));
-
-  let status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
+  f.push(F(poolTok>0n?'info':'warn','How deep is the pool?',poolTok>0n?fmtAmt(poolTok,dec)+' tokens':'thin / empty',poolTok>0n?'Roughly what you\u2019d trade against. Shallow pools mean wild price swings and easy manipulation.':'The pool holds almost none of the token \u2014 expect extreme slippage.',short(pool)));
+  const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
   return{id:'lp',title:'Is the liquidity locked?',status,findings:f};
 }
 
+/* ===== bubble map ===== */
+const KIND_COLOR={pool:'#5ac8fa',creator:'#ff5000',whale:'#ffb800',contract:'#7a807a',burn:'#3a3f3a',holder:'#00c805'};
+const KIND_LABEL={pool:'Liquidity pool',creator:'Creator',whale:'Whale (\u22655%)',contract:'Contract',burn:'Burned',holder:'Holder'};
+function layoutBubbles(nodes,W,H,iters){
+  const maxPct=Math.max.apply(null,nodes.map(n=>n.pct).concat([0.0001]));
+  nodes.forEach((n,i)=>{
+    n.r=9+34*Math.sqrt(n.pct/maxPct);
+    const a=i*2.399963, rad=10+6.5*Math.sqrt(i)*4;
+    n.x=W/2+Math.cos(a)*rad*0.55; n.y=H/2+Math.sin(a)*rad*0.55;
+  });
+  for(let it=0;it<iters;it++){
+    for(let i=0;i<nodes.length;i++){
+      const a=nodes[i];
+      a.x+=(W/2-a.x)*0.008; a.y+=(H/2-a.y)*0.008;
+      for(let j=i+1;j<nodes.length;j++){
+        const b=nodes[j];let dx=b.x-a.x,dy=b.y-a.y;let d=Math.hypot(dx,dy)||0.01;
+        const min=a.r+b.r+4;
+        if(d<min){const push=(min-d)/d*0.5;dx*=push;dy*=push;a.x-=dx;a.y-=dy;b.x+=dx;b.y+=dy;}
+      }
+    }
+    nodes.forEach(n=>{n.x=Math.max(n.r+2,Math.min(W-n.r-2,n.x));n.y=Math.max(n.r+2,Math.min(H-n.r-2,n.y));});
+  }
+  return nodes;
+}
+function renderBubbles(bubbles,dec){
+  if(!bubbles||!bubbles.length)return '<div class="fwhy">No holder data to map.</div>';
+  const W=560,H=340;
+  const nodes=layoutBubbles(bubbles.map(b=>Object.assign({},b)),W,H,260);
+  const kinds=[...new Set(nodes.map(n=>n.kind))];
+  let svg='<svg id="bubbles" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Holder distribution bubble map">';
+  nodes.forEach((n,i)=>{
+    const c=KIND_COLOR[n.kind];
+    svg+='<g class="bub" data-i="'+i+'" data-addr="'+n.addr+'" data-pct="'+n.pct.toFixed(3)+'" data-kind="'+n.kind+'">'
+      +'<circle cx="'+n.x.toFixed(1)+'" cy="'+n.y.toFixed(1)+'" r="'+n.r.toFixed(1)+'" fill="'+c+'" fill-opacity="0.16" stroke="'+c+'" stroke-width="1.4"/>'
+      +(n.r>16?'<text x="'+n.x.toFixed(1)+'" y="'+(n.y+3.5).toFixed(1)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="'+(n.r>26?11:9)+'" fill="'+c+'">'+(n.pct>=1?n.pct.toFixed(0):n.pct.toFixed(1))+'%</text>':'')
+      +'</g>';
+  });
+  svg+='</svg>';
+  const legend='<div class="blegend">'+kinds.map(k=>'<span><i style="background:'+KIND_COLOR[k]+'"></i>'+KIND_LABEL[k]+'</span>').join('')+'</div>';
+  return '<div class="bubblewrap">'+svg+legend+'<div class="btip" id="btip">Tap a bubble to see the wallet.</div></div>';
+}
+function wireBubbles(){
+  const tip=$('btip');if(!tip)return;
+  document.querySelectorAll('.bub').forEach(g=>{
+    g.addEventListener('click',()=>{
+      const a=g.dataset.addr,p=parseFloat(g.dataset.pct),k=g.dataset.kind;
+      tip.innerHTML='<b>'+KIND_LABEL[k]+'</b> \u00b7 '+fmtPct(p)+' of supply<br>'
+        +'<a href="'+SCOUT+'/address/'+a+'" target="_blank" rel="noopener">'+a+' \u2197</a>';
+    });
+  });
+}
+
+/* ===== token card: links + socials ===== */
+async function renderTokenCard(addr,name,sym){
+  $('tokname').textContent=name||'Unknown token';
+  $('toksym').textContent=sym?'$'+sym:'';
+  $('tokaddr').innerHTML='<span>'+short(addr)+'</span><span style="color:var(--green)">copy</span>';
+  $('tokaddr').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(addr);
+    $('tokaddr').innerHTML='<span>'+short(addr)+'</span><span style="color:var(--green)">copied \u2713</span>';};
+  const ic=$('tokicon');ic.textContent=(sym||name||'?').slice(0,3).toUpperCase();
+
+  // official-ish metadata from the explorer only. No invented socials.
+  let meta=null;
+  try{meta=await scout('/api/v2/tokens/'+addr);}catch(e){}
+  if(meta&&meta.icon_url){ic.innerHTML='<img src="'+esc(meta.icon_url)+'" alt="">';}
+
+  const links=[['Explorer',SCOUT+'/token/'+addr],
+               ['Holders',SCOUT+'/token/'+addr+'?tab=holders'],
+               ['Contract',SCOUT+'/address/'+addr+'?tab=contract'],
+               ['DEX Screener','https://dexscreener.com/search?q='+addr]];
+  const socialFields=[['Website',meta&&meta.website],['Twitter',meta&&meta.twitter],['Telegram',meta&&meta.telegram]];
+  const socials=socialFields.filter(s=>s[1]);
+  $('links').innerHTML=links.concat(socials).map(l=>'<a href="'+esc(l[1])+'" target="_blank" rel="noopener nofollow">'+esc(l[0])+' \u2197</a>').join('');
+  $('nolinks').textContent = socials.length ? '' :
+    'No website or socials are published on-chain for this token. Any links you found elsewhere are unverified \u2014 scammers copy real projects\u2019 sites and handles.';
+}
+
 /* ===== render ===== */
-const BADGE={fail:'\uD83D\uDD34',warn:'\uD83D\uDFE0',pass:'\uD83D\uDFE2',unknown:'\u26AA'};
 const VWORD={fail:'Danger',warn:'Caution',pass:'Clear',unknown:'Unknown'};
-function renderModules(mods){
+function renderModules(mods,holdersMod){
   const host=$('modules');host.innerHTML='';
   mods.forEach((m,i)=>{
     const el=document.createElement('div');
     el.className='mod'+(m.status==='fail'||i===0?' open':'');
-    const vc=m.status==='fail'?'mv-fail':m.status==='warn'?'mv-warn':m.status==='unknown'?'mv-unknown':'mv-pass';
-    el.innerHTML='<div class="mod-h"><span class="badge">'+BADGE[m.status]+'</span><span class="mod-title">'+m.title+'</span><span class="mod-verdict '+vc+'">'+VWORD[m.status]+'</span><span class="caret">\u25B8</span></div><div class="mod-body">'+m.findings.map(f=>'<div class="finding"><div class="fq"><span class="q">'+f.q+'</span><span class="a '+f.sev+'">'+f.a+'</span></div>'+(f.why?'<div class="fwhy">'+f.why+'</div>':'')+(f.ev?'<span class="ev">'+String(f.ev).replace(/</g,'&lt;')+'</span>':'')+'</div>').join('')+'</div>';
+    let body=m.findings.map(f=>'<div class="finding"><div class="fq"><span class="q">'+f.q+'</span><span class="a '+f.sev+'">'+f.a+'</span></div>'+(f.why?'<div class="fwhy">'+f.why+'</div>':'')+(f.ev?'<span class="ev">'+esc(f.ev)+'</span>':'')+'</div>').join('');
+    if(m.id==='holders'&&m.bubbles)body+=renderBubbles(m.bubbles,m.dec);
+    el.innerHTML='<div class="mod-h"><span class="dotb d-'+m.status+'"></span><span class="mod-title">'+m.title+'</span><span class="mod-verdict mv-'+m.status+'">'+VWORD[m.status]+'</span><span class="caret">\u25B8</span></div><div class="mod-body">'+body+'</div>';
     el.querySelector('.mod-h').addEventListener('click',()=>el.classList.toggle('open'));
     host.appendChild(el);
   });
+  wireBubbles();
 }
-function renderVerdict(mods,label){
+function renderVerdict(mods){
   const core=['sell','holders','lp'];
   const anyFail=mods.some(m=>m.status==='fail');
   const anyWarn=mods.some(m=>m.status==='warn');
@@ -309,20 +428,20 @@ function renderVerdict(mods,label){
   else if(coreUnknown){cls='unknown';big='Can\u2019t fully check it';sub='Key data was missing, so this is NOT a clean bill of health. Brand-new tokens land here \u2014 high risk.';}
   else if(anyWarn){cls='risky';big='Risky \u2014 be careful';sub='No dealbreakers, but things to watch. Test with a tiny amount first.';}
   else{cls='ok';big='Looks okay';sub='The checks that ran found no traps. Still not a guarantee.';}
-  const b=$('banner');b.className='banner '+cls;$('vbig').textContent=big;$('vsub').textContent=sub;$('vtoken').innerHTML=label;
-  renderModules(mods);$('verdict').classList.add('show');
+  $('banner').className='banner '+cls;$('vbig').textContent=big;$('vsub').textContent=sub;
+  renderModules(mods);
+  $('verdict').classList.add('show');
 }
 
 async function run(){
   hideErr();clearLog();$('verdict').classList.remove('show');
-  let addr=$('addr').value.trim().toLowerCase();
-  RPC=$('rpc').value.trim();SCOUT=$('scout').value.trim();
+  const addr=$('addr').value.trim().toLowerCase();
   if(!/^0x[0-9a-f]{40}$/.test(addr)){showErr('<b>That doesn\u2019t look like a token address.</b> Paste the full 0x\u2026 address (42 characters).');return;}
   const btn=$('scan');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
-    log('\u203a checking endpoint\u2026');
-    let cid;try{cid=await rpc('eth_chainId',[]);}catch(e){showErr('<b>Can\u2019t reach the blockchain.</b> If you\u2019re in the Claude app preview, that sandbox blocks network \u2014 open in Safari or deploy it. Otherwise check the RPC.');log('\u2717 '+String(e.message||e),'er');btn.disabled=false;btn.textContent='Check this token';return;}
-    if(parseInt(cid,16)!==4663){showErr('<b>Wrong network.</b> RPC is chain '+parseInt(cid,16)+', not Robinhood Chain (4663).');btn.disabled=false;btn.textContent='Check this token';return;}
+    log('\u203a connecting\u2026');
+    let cid;try{cid=await rpc('eth_chainId',[]);}catch(e){showErr('<b>Can\u2019t reach the blockchain.</b> If you\u2019re viewing this in an in-app preview, that sandbox blocks network requests \u2014 open it in a real browser.');log('\u2717 '+String(e.message||e),'er');btn.disabled=false;btn.textContent='Check this token';return;}
+    if(parseInt(cid,16)!==4663){showErr('<b>Wrong network.</b> Endpoint is chain '+parseInt(cid,16)+', not Robinhood Chain (4663).');btn.disabled=false;btn.textContent='Check this token';return;}
     log('  connected to Robinhood Chain','ok');
     log('\u203a reading token\u2026');
     let name='',sym='',dec=18;
@@ -333,13 +452,13 @@ async function run(){
     log('\u203a holders & liquidity\u2026');
     const mH=await modHolders(addr,dec);log('  '+(mH.pool?'pool found':'no pool'),mH.status==='unknown'?'er':'ok');
     log('\u203a live honeypot test\u2026');
-    const mS=await modHoneypot(addr,mH.pool,mH.sampleHolder,dec);log('  '+mS.status,mS.status==='fail'?'er':'ok');
+    const mS=await modHoneypot(addr,mH.pool,mH.sampleHolder);log('  '+mS.status,mS.status==='fail'?'er':'ok');
     log('\u203a liquidity lock\u2026');
     const mL=await modLiquidity(addr,mH.pool,dec);log('  '+mL.status,mL.status==='fail'?'er':'ok');
-    const mods=[mS,mH,mL];
-    const label=(name||sym)?'<b>'+(name||'').replace(/</g,'')+'</b>'+(sym?' ('+sym.replace(/</g,'')+')':'')+'<br>'+short(addr):short(addr);
-    renderVerdict(mods,label);log('\u2713 done','ok');
-  }catch(e){showErr('<b>Something went wrong:</b> '+String(e.message||e)+'<br><span style="color:#93a1b8">If it mentions CORS or rate limits, try a different RPC in Advanced.</span>');log('\u2717 '+String(e.message||e),'er');}
+    await renderTokenCard(addr,name,sym);
+    renderVerdict([mS,mH,mL]);
+    log('\u2713 done','ok');
+  }catch(e){showErr('<b>Something went wrong:</b> '+esc(String(e.message||e)));log('\u2717 '+String(e.message||e),'er');}
   finally{btn.disabled=false;btn.textContent='Check this token';}
 }
 $('scan').addEventListener('click',run);
