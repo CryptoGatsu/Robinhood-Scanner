@@ -343,7 +343,31 @@ async function rpc(m,p){
 const call=(to,data,from)=>rpc('eth_call',[Object.assign({to,data:'0x'+data},from?{from}:{}),'latest']);
 const getCode=a=>rpc('eth_getCode',[a,'latest']);
 const getStorage=(a,s)=>rpc('eth_getStorageAt',[a,s,'latest']);
-async function scout(p){const r=await fetch(SCOUT+p,{headers:{accept:'application/json'}});if(!r.ok)throw new Error('explorer HTTP '+r.status);return r.json();}
+const TRANSIENT=new Set([429,500,502,503,504]);
+function _transient(status,err){
+  if(status&&TRANSIENT.has(status))return true;
+  /* a 5xx/429 with no CORS header surfaces in the browser as a TypeError */
+  if(!status&&err&&/Failed to fetch|NetworkError|Load failed/i.test(err.message||''))return true;
+  return false;
+}
+const _eb=(a,ra)=>(ra?Math.min(8000,ra*1000):Math.min(6000,500*Math.pow(2,a)))+Math.random()*150;
+let SCOUT_DOWN=false;
+async function scout(p,tries){
+  tries=tries||3;
+  for(let a=0;a<tries;a++){
+    let res=null,err=null;
+    try{res=await fetch(SCOUT+p,{headers:{accept:'application/json'}});}catch(e){err=e;}
+    if(res&&res.ok){SCOUT_DOWN=false;return res.json();}
+    const st=res?res.status:0;
+    if(!_transient(st,err))throw new Error('explorer HTTP '+(st||'error'));
+    if(a<tries-1){
+      const ra=res&&parseInt(res.headers.get('retry-after')||'',10);
+      await new Promise(r=>setTimeout(r,_eb(a,isFinite(ra)?ra:0)));
+    }
+  }
+  SCOUT_DOWN=true;
+  throw new Error('explorer is temporarily unavailable');
+}
 
 const strip=h=>h&&h.startsWith('0x')?h.slice(2):(h||'');
 function decodeString(hex){hex=strip(hex);if(hex.length<128){let s='';for(let i=0;i<hex.length;i+=2){const c=parseInt(hex.slice(i,i+2),16);if(c>0)s+=String.fromCharCode(c);}return s.trim();}try{const off=parseInt(hex.slice(0,64),16)*2,len=parseInt(hex.slice(off,off+64),16)*2,d=hex.slice(off+64,off+64+len);let s='';for(let i=0;i<d.length;i+=2)s+=String.fromCharCode(parseInt(d.slice(i,i+2),16));return s.replace(/\u0000/g,'').trim();}catch(e){return '';}}
@@ -698,17 +722,20 @@ async function getLogsChunk(params,from,to,depth){
 }
 
 /* Find the biggest range the endpoint will actually serve, once per session. */
+/* One attempt is enough to learn whether this endpoint serves chain-wide logs.
+   Cached (0 is a valid answer, so test against null). */
 async function probeLogRange(params,latest){
-  if(LOG_RANGE!==null)return LOG_RANGE;   /* 0 is a valid cached answer */
-  for(const r of [2000,1000,500,200,50]){
-    const from=Math.max(0,latest-r+1);
-    try{
-      await rpc('eth_getLogs',[Object.assign({},params,{
-        fromBlock:'0x'+from.toString(16),toBlock:'0x'+latest.toString(16)})]);
-      LOG_RANGE=r;return r;
-    }catch(e){ if(!LOG_ERR)LOG_ERR=String(e.message||e); if(RATE_LIMITED)break; }
+  if(LOG_RANGE!==null)return LOG_RANGE;
+  const from=Math.max(0,latest-MAX_RANGE+1);
+  try{
+    await rpc('eth_getLogs',[Object.assign({},params,{
+      fromBlock:'0x'+from.toString(16),toBlock:'0x'+latest.toString(16)})]);
+    LOG_RANGE=MAX_RANGE;
+  }catch(e){
+    if(!LOG_ERR)LOG_ERR=String(e.message||e);
+    LOG_RANGE=0;
   }
-  LOG_RANGE=0;return 0;   /* 0 = chain-wide log queries unusable here */
+  return LOG_RANGE;
 }
 async function getLogsAdaptive(params,from,to){
   if(to<from)return [];
@@ -1091,20 +1118,44 @@ function tRow(t){
     ev.stopPropagation();$('addr').value=t.addr;window.scrollTo({top:0,behavior:'smooth'});run();});
   return el;
 }
+const TERM_CACHE_KEY='rhscan.terminal.v1';
+const TERM_TTL=5*60*1000;
+function termCacheGet(){
+  try{const s=localStorage.getItem(TERM_CACHE_KEY);if(!s)return null;
+    const j=JSON.parse(s);return (Date.now()-j.at<TERM_TTL*6)?j:null;}catch(e){return null;}
+}
+function termCacheSet(tab,tokens){
+  try{const cur=termCacheGet()||{tabs:{}};cur.tabs=cur.tabs||{};cur.tabs[tab]=tokens;cur.at=Date.now();
+    localStorage.setItem(TERM_CACHE_KEY,JSON.stringify(cur));}catch(e){}
+}
 async function loadTerminal(force){
   RATE_LIMITED=false;if(force){LOG_ERR=null;LOG_RANGE=null;}
   const head=$('termhead'),list=$('tlist');
-  list.innerHTML='<div class="cload">Scanning recent chain activity\u2026</div>';
+  const cached=termCacheGet();
+  const haveCache=cached&&cached.tabs&&cached.tabs[TERM_TAB]&&cached.tabs[TERM_TAB].length;
+
+  if(haveCache&&!force){
+    list.innerHTML='';
+    cached.tabs[TERM_TAB].forEach(t=>list.appendChild(tRow(reviveTok(t))));
+    const age=Math.round((Date.now()-cached.at)/1000);
+    head.textContent='cached \u00b7 '+(age<90?age+'s':Math.round(age/60)+'m')+' ago';
+  }else{
+    list.innerHTML='<div class="cload">Loading tokens\u2026</div>';
+  }
+
   try{
     if(force)delete _cache['discover'];
     const d=await discoverTokens();
     head.textContent = (d.source==='logs')
-      ? ('scanned '+d.scanned.logs.toLocaleString()+' transfers \u00b7 blocks '+d.scanned.from.toLocaleString()+'\u2013'+d.scanned.to.toLocaleString())
+      ? ('scanned '+d.scanned.logs.toLocaleString()+' transfers')
       : ('from explorer index'+(LOG_ERR?' \u00b7 chain-wide logs unavailable':''));
     if(LOG_ERR)head.title=LOG_ERR;
     const raw=(TERM_TAB==='newest'?d.newest:d.trending).slice(0,MAX_TOKENS);
     const toks=await enrich(raw.map(x=>Object.assign({},x)));
-    if(!toks.length){list.innerHTML='<div class="cload">No ERC-20 activity found in the last '+SCAN_BLOCKS.toLocaleString()+' blocks.</div>';return;}
+    if(!toks.length){
+      if(!haveCache)list.innerHTML='<div class="cload">No tokens found.</div>';
+      return;
+    }
     list.innerHTML='';
     const els=toks.map(t=>{const e=tRow(t);list.appendChild(e);return e;});
     let i=0;
@@ -1116,14 +1167,23 @@ async function loadTerminal(force){
         const fresh=tRow(t);els[k].replaceWith(fresh);els[k]=fresh;
       }
     }
-    await Promise.all([worker(),worker(),worker()]);
+    await Promise.all([worker(),worker()]);
+    termCacheSet(TERM_TAB,toks.map(serTok));
   }catch(e){
-    const rl=RATE_LIMITED||/rate limit/i.test(String(e.message||''));
-    list.innerHTML='<div class="cload">'+(rl
-      ?'The RPC endpoint hit its rate limit. Wait a moment and press refresh \u2014 or plug in your own Alchemy/QuickNode key for a bigger budget.'
-      :'Couldn\u2019t scan the chain: '+esc(String(e.message||e)))+'</div>';
+    const down=SCOUT_DOWN||/unavailable|Failed to fetch/i.test(String(e.message||''));
+    if(haveCache){
+      head.textContent='showing cached results \u00b7 '+(down?'explorer is down':'refresh failed');
+    }else{
+      list.innerHTML='<div class="cload">'+(down
+        ? 'The block explorer is temporarily unavailable (it rate-limits or restarts sometimes). Pasting a token address above still works. <br><br><b>Try refresh in a minute.</b>'
+        : 'Couldn\u2019t load tokens: '+esc(String(e.message||e)))+'</div>';
+    }
   }
 }
+/* BigInt-safe (de)serialisation for the cache */
+function serTok(t){return{addr:t.addr,name:t.name,sym:t.sym,dec:t.dec,txs:t.txs,
+  supply:t.supply?t.supply.toString():'0',label:t.label,why:t.why,pool:t.pool,mkt:t.mkt};}
+function reviveTok(t){return Object.assign({},t,{supply:BigInt(t.supply||'0')});}
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');TERM_TAB=b.dataset.tab;loadTerminal(false);}));
