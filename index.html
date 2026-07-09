@@ -882,6 +882,7 @@ async function scoutLogs(address,maxPages){
   return out;
 }
 async function priceSeries(token){
+  /* explorer-only; never touches eth_getLogs */
   if(!token.pool)return{kind:'none',reason:'no pool'};
   const items=await scoutLogs(token.pool,3);
   if(!items.length)return{kind:'none',reason:'no logs indexed'};
@@ -974,6 +975,7 @@ async function run(){
     try{name=decodeString(await call(addr,READ.name));}catch(e){}
     try{sym=decodeString(await call(addr,READ.symbol));}catch(e){}
     try{dec=Number(toBig(await call(addr,READ.decimals)))||18;}catch(e){}
+    let supply=0n;try{supply=toBig(await call(addr,READ.totalSupply));}catch(e){}
     log('  '+(name||'(no name)')+(sym?' \u00b7 '+sym:''),'ok');
 
     const mkt=await fetchMarket(addr,supply,dec);
