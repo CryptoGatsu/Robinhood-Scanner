@@ -289,11 +289,54 @@ const DEAD='0x000000000000000000000000000000000000dead';
 const LOCKERS=[];
 
 let _id=1;
+
+/* ---- Alchemy meters compute units per second, not requests. Pace ourselves
+   or the provider returns 429 (which the browser reports as a CORS error,
+   because rate-limit responses carry no Access-Control-Allow-Origin). ---- */
+const CU={eth_getLogs:75,eth_call:26,eth_getStorageAt:17,eth_getCode:26,eth_blockNumber:10,eth_chainId:0,eth_getBalance:19};
+const CU_RATE=280, CU_CAP=280, EPS=1e-6;
+let _tokens=CU_CAP,_last=Date.now();
+const _sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function _take(cost){
+  cost=Math.min(cost,CU_CAP);            /* never ask for more than the bucket holds */
+  let guard=0;
+  for(;;){
+    if(++guard>64)return;
+    const t=Date.now();
+    _tokens=Math.min(CU_CAP,_tokens+(t-_last)/1000*CU_RATE);_last=t;
+    if(_tokens+EPS>=cost){_tokens-=cost;return;}
+    await _sleep(Math.max(15,Math.ceil((cost-_tokens)/CU_RATE*1000)));
+  }
+}
+let RATE_LIMITED=false;
+const _is429=(status,err)=>status===429||(!status&&err&&/Failed to fetch|NetworkError|Load failed/i.test(err.message||''));
+const _backoff=(a,ra)=>ra?Math.min(10000,ra*1000):Math.min(8000,400*Math.pow(2,a));
+
+/* one throttled, retrying HTTP hop. body may be object (single) or array (batch) */
+async function _post(body,cost){
+  await _take(cost);
+  for(let attempt=0;attempt<4;attempt++){
+    let res=null,err=null;
+    try{res=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});}
+    catch(e){err=e;}
+    if(res&&res.status===429||(!res&&_is429(0,err))){
+      RATE_LIMITED=true;
+      const ra=res&&parseInt(res.headers.get('retry-after')||'',10);
+      await _sleep(_backoff(attempt,isFinite(ra)?ra:0)+Math.random()*200);
+      await _take(cost);
+      continue;
+    }
+    if(err)throw err;
+    let j=null;try{j=await res.json();}catch(e){}
+    if(!j){if(!res.ok)throw new Error('HTTP '+res.status);return null;}
+    return j;
+  }
+  RATE_LIMITED=true;
+  throw new Error('rate limited \u2014 the RPC endpoint is over its request budget');
+}
 async function rpc(m,p){
-  const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:_id++,method:m,params:p})});
-  let j=null;try{j=await r.json();}catch(e){}
+  const j=await _post({jsonrpc:'2.0',id:_id++,method:m,params:p},CU[m]||26);
   if(j&&j.error){const e=new Error(j.error.message||'rpc error');e.rpc=j.error;throw e;}
-  if(!r.ok)throw new Error(m+' HTTP '+r.status);
   return j?j.result:null;
 }
 const call=(to,data,from)=>rpc('eth_call',[Object.assign({to,data:'0x'+data},from?{from}:{}),'latest']);
@@ -573,20 +616,36 @@ async function renderTokenCard(addr,name,sym){
 const TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';
 const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
-const SCAN_BLOCKS=20000;      // 10 chunks of 2000; keeps the RPC budget sane
-const MAX_TOKENS=12;
+const SCAN_BLOCKS=8000;       // 4 chunks of 2000 — keeps page load inside the CU budget
+const MAX_TOKENS=8;
 const CACHE_TTL=5*60*1000;
 
-/* batched JSON-RPC: one HTTP request, many calls */
+/* batched JSON-RPC: one HTTP hop, many calls. CU cost is the SUM of the calls,
+   so it must be charged to the limiter as such. */
+const BATCH_CU_MAX=240;   /* keep any single HTTP hop under the per-second budget */
 async function rpcBatch(reqs){
   if(!reqs.length)return [];
-  const body=reqs.map((r,i)=>({jsonrpc:'2.0',id:i,method:r.method,params:r.params}));
-  const res=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-  let j=null;try{j=await res.json();}catch(e){}
-  if(!j){if(!res.ok)throw new Error('batch HTTP '+res.status);return new Array(reqs.length).fill(null);}
-  if(j&&j.error&&!Array.isArray(j))throw new Error(j.error.message||'batch error');
+  /* split into groups whose summed CU stays under the bucket, else the request
+     can never be admitted (and the provider would 429 it anyway) */
+  const groups=[];let cur=[],curCost=0;
+  reqs.forEach((r,i)=>{
+    const c=CU[r.method]||26;
+    if(cur.length&&curCost+c>BATCH_CU_MAX){groups.push(cur);cur=[];curCost=0;}
+    cur.push({r,i});curCost+=c;
+  });
+  if(cur.length)groups.push(cur);
+
   const out=new Array(reqs.length).fill(null);
-  (Array.isArray(j)?j:[j]).forEach(r=>{if(r&&typeof r.id==='number'&&!r.error)out[r.id]=r.result;});
+  for(const g of groups){
+    const cost=g.reduce((s,x)=>s+(CU[x.r.method]||26),0);
+    const body=g.map((x,k)=>({jsonrpc:'2.0',id:k,method:x.r.method,params:x.r.params}));
+    let j=null;
+    try{j=await _post(body,cost);}catch(e){if(RATE_LIMITED)break;throw e;}
+    if(!j)continue;
+    (Array.isArray(j)?j:[j]).forEach(res=>{
+      if(res&&typeof res.id==='number'&&!res.error&&g[res.id])out[g[res.id].i]=res.result;
+    });
+  }
   return out;
 }
 
@@ -609,15 +668,13 @@ async function getLogsChunk(params,from,to,depth){
     return await rpc('eth_getLogs',[Object.assign({},params,{
       fromBlock:'0x'+from.toString(16),toBlock:'0x'+to.toString(16)})]);
   }catch(e){
-    if(depth>=6||to-from+1<=MIN_RANGE)return [];
+    if(RATE_LIMITED||depth>=3||to-from+1<=MIN_RANGE)return [];
     const hint=parseRangeHint(e.message);
-    let mid;
-    if(hint&&hint>=MIN_RANGE&&hint<(to-from+1))mid=from+hint-1;
-    else mid=Math.floor((from+to)/2);
+    let mid=(hint&&hint>=MIN_RANGE&&hint<(to-from+1))?from+hint-1:Math.floor((from+to)/2);
     if(mid>=to)mid=Math.floor((from+to)/2);
-    const [a,b]=await Promise.all([
-      getLogsChunk(params,from,mid,depth+1),
-      getLogsChunk(params,mid+1,to,depth+1)]);
+    /* sequential, never parallel: a parallel retry is what triggers 429 storms */
+    const a=await getLogsChunk(params,from,mid,depth+1);
+    const b=await getLogsChunk(params,mid+1,to,depth+1);
     return a.concat(b);
   }
 }
@@ -635,7 +692,7 @@ async function getLogsAdaptive(params,from,to){
       if(Array.isArray(res[k]))all=all.concat(res[k]);
       else{const r=await getLogsChunk(params,slice[k][0],slice[k][1],0);all=all.concat(r);}
     }
-    if(all.length>60000)break;
+    if(all.length>60000||RATE_LIMITED)break;
   }
   return all;
 }
@@ -693,9 +750,10 @@ async function enrich(list){
 async function quickLabel(t){
   const rt=strip(t.code),has=s=>rt.includes(s);
   const danger = has(SEL.mint)||has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist);
-  let proxy=false;
-  try{const a=addrWord(await getStorage(t.addr,EIP1967_IMPL));if(a!==ZERO)proxy=true;}catch(e){}
-  if(danger||proxy){t.label='unsafe';t.why=proxy?'Upgradeable proxy \u2014 code can be rewritten':'Mint or blacklist function present';return t;}
+  /* EIP-1967 proxies are tiny delegating stubs; detect from the bytecode we
+     already have instead of spending another RPC call per token. */
+  const proxy = rt.length>0 && rt.length<800 && rt.indexOf('363d3d373d3d3d363d73')>=0;
+  if(danger||proxy){t.label='unsafe';t.why=proxy?'Minimal proxy \u2014 logic lives elsewhere and can change':'Mint or blacklist function present';return t;}
 
   let holders=null;
   try{holders=(await scout('/api/v2/tokens/'+t.addr+'/holders')).items;}catch(e){}
@@ -946,6 +1004,7 @@ function tRow(t){
   return el;
 }
 async function loadTerminal(force){
+  RATE_LIMITED=false;
   const head=$('termhead'),list=$('tlist');
   list.innerHTML='<div class="cload">Scanning recent chain activity\u2026</div>';
   try{
@@ -967,7 +1026,12 @@ async function loadTerminal(force){
       }
     }
     await Promise.all([worker(),worker(),worker()]);
-  }catch(e){list.innerHTML='<div class="cload">Couldn\u2019t scan the chain: '+esc(String(e.message||e))+'</div>';}
+  }catch(e){
+    const rl=RATE_LIMITED||/rate limit/i.test(String(e.message||''));
+    list.innerHTML='<div class="cload">'+(rl
+      ?'The RPC endpoint hit its rate limit. Wait a moment and press refresh \u2014 or plug in your own Alchemy/QuickNode key for a bigger budget.'
+      :'Couldn\u2019t scan the chain: '+esc(String(e.message||e)))+'</div>';
+  }
 }
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
