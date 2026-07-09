@@ -650,6 +650,8 @@ async function renderTokenCard(addr,name,sym){
 /* ============================ TERMINAL ============================ */
 const TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';
+const TOPIC_V3SWAP='0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67';
+const Q96=2n**96n;
 const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
 const SCAN_BLOCKS=8000;       // 4 chunks of 2000 — keeps page load inside the CU budget
 const MAX_TOKENS=8;
@@ -909,39 +911,52 @@ async function scoutLogs(address,maxPages){
   return out;
 }
 async function priceSeries(token){
-  /* explorer-only; never touches eth_getLogs */
-  if(!token.pool)return{kind:'none',reason:'no pool'};
+  if(!token.pool)return{kind:'none',reason:'no pool found'};
   const items=await scoutLogs(token.pool,3);
-  if(!items.length)return{kind:'none',reason:'no logs indexed'};
-
-  /* which side is our token? one cheap eth_call each, these work fine */
+  if(!items.length)return{kind:'none',reason:'no logs indexed for this pool'};
   let t0=null,t1=null;
   try{t0=addrWord(await call(token.pool,READ.token0));}catch(e){}
   try{t1=addrWord(await call(token.pool,READ.token1));}catch(e){}
-  if(!t0||!t1)return{kind:'none',reason:'not a v2-style pool'};
+  if(!t0||!t1)return{kind:'none',reason:'not a standard pool'};
   const tokenIs0=(t0===token.addr.toLowerCase());
-  if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in pool'};
+  if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in this pool'};
   let qdec=18;
-  try{const q=tokenIs0?t1:t0;qdec=Number(toBig(await call(q,READ.decimals)))||18;}catch(e){}
+  try{qdec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
 
   const pts=[];
   for(const l of items){
-    const t=(l.topics||[])[0];
-    if(!t||t.toLowerCase()!==TOPIC_SYNC)continue;
+    const tp=((l.topics||[])[0]||'').toLowerCase();
     const d=strip(l.data);
-    if(d.length<128)continue;
-    const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
-    const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
-    if(base===0n)continue;
-    const S=10n**12n;
-    const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(qdec)));
-    const p=Number(scaled)/1e12;
-    const blk=Number(l.block_number);
-    if(isFinite(p)&&p>0&&isFinite(blk))pts.push({x:blk,y:p});
+    const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
+    if(!isFinite(blk))continue;
+    if(tp===TOPIC_SYNC){
+      // v2: Sync(reserve0, reserve1)
+      if(d.length<128)continue;
+      const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
+      const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
+      if(base===0n)continue;
+      const S=10n**12n;
+      const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(qdec)));
+      const p=Number(scaled)/1e12;
+      if(isFinite(p)&&p>0)pts.push({x:blk,y:p});
+    }else if(tp===TOPIC_V3SWAP){
+      // v3: Swap(..., sqrtPriceX96 at word index 2, ...)
+      if(d.length<192)continue;
+      const sq=BigInt('0x'+d.slice(128,192));
+      if(sq===0n)continue;
+      // price of token0 in token1 = (sq/2^96)^2 * 10^(dec0-dec1)
+      const dec0=tokenIs0?token.dec:qdec, dec1=tokenIs0?qdec:token.dec;
+      const num=sq*sq;
+      const S=10n**18n;
+      let p0=Number(num*S/(Q96*Q96))/1e18;
+      p0=p0*Math.pow(10,dec0-dec1);
+      const p=tokenIs0?p0:(p0>0?1/p0:0);
+      if(isFinite(p)&&p>0)pts.push({x:blk,y:p});
+    }
   }
   pts.sort((a,b)=>a.x-b.x);
-  if(pts.length<2)return{kind:'none',reason:'no reserve updates found'};
-  return{kind:'price',pts};
+  if(pts.length<2)return{kind:'none',reason:'not enough price events to chart'};
+  return{kind:'price',pts:pts.slice(-300)};
 }
 
 /* ===== render ===== */
