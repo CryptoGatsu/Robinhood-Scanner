@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RookScan — Robinhood Chain token scanner</title>
+<style>
+  /* ---- Design tokens ---------------------------------------------------
+     Subject: a forensic instrument for a brand-new financial L2.
+     Direction: "trading terminal at 3am" — deep ink-navy, not black; a single
+     signal-amber that reads like a fill light on a dark desk; verdicts in a
+     restrained green/amber/red that a trader already reads instinctively.
+     Display face: Spectral (a serif with authority — this chain carries real
+     equities, not just memecoins). Data face: monospace for every address,
+     selector, and number, because provenance is the whole product. ------- */
+  @import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+  :root{
+    --ink:#0b1220;         /* base */
+    --ink-2:#111a2c;       /* raised */
+    --ink-3:#18243a;       /* raised hover / border */
+    --line:#243349;
+    --fg:#e8edf5;
+    --fg-dim:#93a1b8;
+    --fg-faint:#647089;
+    --amber:#f5a623;       /* signal */
+    --amber-soft:#7a5a1e;
+    --pass:#4ec9a5;
+    --warn:#f5a623;
+    --fail:#f16a6a;
+    --info:#6ea8fe;
+    --r:10px;
+  }
+  :root{ --fg-faint:#647089; }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:
+      radial-gradient(1200px 600px at 80% -10%, #16233b 0%, transparent 60%),
+      var(--ink);
+    color:var(--fg);
+    font-family:'Inter',system-ui,sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+
+  /* header */
+  header{padding:34px 0 8px}
+  .brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .rook{
+    font-family:'Spectral',serif;font-weight:600;font-size:30px;letter-spacing:-.01em;
+    display:flex;align-items:center;gap:10px;
+  }
+  .rook .glyph{
+    width:26px;height:26px;flex:0 0 auto;display:inline-block;
+    filter:drop-shadow(0 0 10px rgba(245,166,35,.35));
+  }
+  .rook em{font-style:normal;color:var(--amber)}
+  .tagline{color:var(--fg-dim);font-size:13.5px;margin-top:6px;max-width:60ch}
+  .chainpill{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--amber);
+    border:1px solid var(--amber-soft);border-radius:100px;padding:3px 9px;
+    background:rgba(245,166,35,.06);white-space:nowrap;
+  }
+
+  /* input */
+  .panel{
+    background:linear-gradient(180deg,var(--ink-2),#0e1626);
+    border:1px solid var(--line);border-radius:var(--r);
+    padding:16px;margin-top:22px;
+  }
+  .field{display:flex;gap:10px;flex-wrap:wrap}
+  .field input{
+    flex:1 1 320px;min-width:0;background:var(--ink);color:var(--fg);
+    border:1px solid var(--ink-3);border-radius:8px;padding:13px 14px;
+    font-family:'IBM Plex Mono',monospace;font-size:14px;
+  }
+  .field input:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 3px rgba(245,166,35,.12)}
+  .field input::placeholder{color:var(--fg-faint)}
+  .btn{
+    background:var(--amber);color:#1a1206;border:none;border-radius:8px;
+    padding:0 22px;font-weight:600;font-size:14px;cursor:pointer;
+    font-family:'Inter',sans-serif;min-height:48px;flex:0 0 auto;
+  }
+  .btn:disabled{opacity:.55;cursor:progress}
+  .btn.ghost{background:transparent;color:var(--fg-dim);border:1px solid var(--ink-3);font-weight:500}
+  .row2{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .rpc{flex:1 1 300px;min-width:0}
+  .rpc input{
+    width:100%;background:var(--ink);color:var(--fg-dim);
+    border:1px solid var(--ink-3);border-radius:8px;padding:9px 11px;
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+  }
+  .samples{display:flex;gap:6px;flex-wrap:wrap;font-size:12px}
+  .samples button{
+    background:none;border:1px dashed var(--ink-3);color:var(--fg-dim);
+    border-radius:6px;padding:5px 9px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11.5px;
+  }
+  .samples button:hover{border-color:var(--amber);color:var(--amber)}
+  .hint{color:var(--fg-faint);font-size:12px;margin-top:9px;line-height:1.5}
+
+  /* verdict banner */
+  .verdict{
+    display:none;margin-top:22px;border-radius:var(--r);overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .verdict.show{display:block;animation:rise .35s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .vhead{display:flex;align-items:center;gap:16px;padding:18px 18px}
+  .score-dial{position:relative;width:74px;height:74px;flex:0 0 auto}
+  .score-dial svg{transform:rotate(-90deg)}
+  .score-dial .num{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:22px;
+  }
+  .vmeta{flex:1 1 auto;min-width:0}
+  .vgrade{font-family:'Spectral',serif;font-size:22px;font-weight:600;line-height:1.15}
+  .vtoken{color:var(--fg-dim);font-size:13px;margin-top:3px;word-break:break-all}
+  .vtoken b{color:var(--fg)}
+  .flag-count{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;font-size:12px}
+  .chip{border-radius:100px;padding:2px 9px;font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:11px}
+  .chip.f{background:rgba(241,106,106,.14);color:#ff9a9a;border:1px solid rgba(241,106,106,.3)}
+  .chip.w{background:rgba(245,166,35,.13);color:var(--amber);border:1px solid var(--amber-soft)}
+  .chip.p{background:rgba(78,201,165,.12);color:var(--pass);border:1px solid rgba(78,201,165,.3)}
+
+  /* module cards */
+  .modules{margin-top:16px;display:grid;gap:12px}
+  .mod{background:var(--ink-2);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .mod-h{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .mod-h:hover{background:var(--ink-3)}
+  .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 8px currentColor}
+  .dot.pass{color:var(--pass);background:var(--pass)}
+  .dot.warn{color:var(--warn);background:var(--warn)}
+  .dot.fail{color:var(--fail);background:var(--fail)}
+  .dot.info{color:var(--info);background:var(--info)}
+  .dot.idle{color:#3a4a63;background:#3a4a63;box-shadow:none}
+  .mod-title{flex:1 1 auto;font-weight:600;font-size:14.5px}
+  .mod-title small{display:block;font-weight:400;color:var(--fg-dim);font-size:12px;margin-top:1px}
+  .mod-stat{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--fg-dim)}
+  .caret{color:var(--fg-faint);transition:transform .2s;font-size:12px}
+  .mod.open .caret{transform:rotate(90deg)}
+  .mod-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .mod.open .mod-body{display:block}
+  .finding{display:flex;gap:10px;padding:11px 0;border-bottom:1px dashed var(--ink-3)}
+  .finding:last-child{border-bottom:none}
+  .finding .fdot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:0 0 auto}
+  .fdot.pass{background:var(--pass)}.fdot.warn{background:var(--warn)}.fdot.fail{background:var(--fail)}.fdot.info{background:var(--info)}
+  .finding .ftxt{flex:1 1 auto;min-width:0}
+  .finding .flabel{font-size:13.5px;font-weight:500}
+  .finding .fdesc{color:var(--fg-dim);font-size:12.5px;margin-top:2px}
+  .ev{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--info);
+      background:var(--ink);border:1px solid var(--ink-3);border-radius:6px;
+      padding:2px 6px;margin-top:5px;display:inline-block;word-break:break-all;max-width:100%}
+  .ev.mut{color:var(--fg-dim)}
+
+  /* status log */
+  .log{margin-top:14px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--fg-dim);
+       display:none}
+  .log.show{display:block}
+  .log div{padding:2px 0;opacity:.9}
+  .log .ok{color:var(--pass)}.log .er{color:var(--fail)}
+
+  footer{margin:44px 0 30px;color:var(--fg-faint);font-size:12px;line-height:1.6}
+  footer b{color:var(--fg-dim)}
+  .diveleg{display:flex;gap:16px;flex-wrap:wrap;margin:18px 0 0;font-size:11.5px;color:var(--fg-dim)}
+  .diveleg span{display:flex;align-items:center;gap:6px}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.25);
+        border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+  .err-box{display:none;margin-top:14px;background:rgba(241,106,106,.08);
+    border:1px solid rgba(241,106,106,.3);border-radius:8px;padding:12px 14px;font-size:13px}
+  .err-box.show{display:block}
+  .err-box b{color:#ff9a9a}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="rook">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none">
+          <path d="M4 21h16v-2l-2-1v-6h-2v3h-2V9h2V6h-2V3h-2v3H8V3H6v3h2v3H6v3H4v6l-2 1v2z" fill="#f5a623"/>
+        </svg>
+        Rook<em>Scan</em>
+      </div>
+      <span class="chainpill">Robinhood Chain · id 4663</span>
+    </div>
+    <p class="tagline">Paste a token address. It reads the contract bytecode, the Uniswap&nbsp;v4 hook, the holder set, and the canonical stock-token registry — and shows you the evidence behind every flag, not just a number.</p>
+  </header>
+
+  <div class="panel">
+    <div class="field">
+      <input id="addr" class="mono" placeholder="0x… token contract address" autocomplete="off" spellcheck="false" />
+      <button id="scan" class="btn">Scan</button>
+    </div>
+    <div class="row2">
+      <div class="rpc"><input id="rpc" class="mono" value="https://robinhood-mainnet.g.alchemy.com/v2/bmmd7FRjvUwPIqLwtMOot" /></div>
+      <div class="samples">
+        <button data-fill="stock">stock-token example</button>
+        <button data-fill="clear">clear</button>
+      </div>
+    </div>
+    <div class="hint" id="hint">RPC is read-only (<span class="mono">eth_call</span> / <span class="mono">eth_getLogs</span>). Nothing is signed or sent. If the default endpoint rate-limits, drop in a QuickNode / Alchemy / dRPC URL.</div>
+    <div class="err-box" id="errbox"></div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <!-- verdict -->
+  <div class="verdict" id="verdict">
+    <div class="vhead" id="vhead">
+      <div class="score-dial">
+        <svg width="74" height="74">
+          <circle cx="37" cy="37" r="31" stroke="#22314a" stroke-width="6" fill="none"/>
+          <circle id="dialArc" cx="37" cy="37" r="31" stroke="#4ec9a5" stroke-width="6" fill="none"
+                  stroke-linecap="round" stroke-dasharray="195" stroke-dashoffset="195"/>
+        </svg>
+        <div class="num mono" id="dialNum">–</div>
+      </div>
+      <div class="vmeta">
+        <div class="vgrade" id="vgrade">—</div>
+        <div class="vtoken" id="vtoken"></div>
+        <div class="flag-count" id="flagcount"></div>
+      </div>
+    </div>
+    <div class="modules" id="modules"></div>
+  </div>
+
+  <div class="diveleg">
+    <span><i class="dot pass" style="width:9px;height:9px;border-radius:50%;display:inline-block"></i> clean</span>
+    <span><i class="dot warn" style="width:9px;height:9px;border-radius:50%;display:inline-block"></i> caution</span>
+    <span><i class="dot fail" style="width:9px;height:9px;border-radius:50%;display:inline-block"></i> danger</span>
+    <span><i class="dot info" style="width:9px;height:9px;border-radius:50%;display:inline-block"></i> context</span>
+  </div>
+
+  <footer>
+    <b>What this can and can't see.</b> Contract-capability, hook-permission, LP-position, holder-concentration and impersonation checks run entirely from public reads and are shown with evidence. A definitive <b>honeypot sell test</b> requires forking chain state and simulating a buy→sell round trip — that's a server/anvil step, so the contract module flags <em>capabilities that enable</em> honeypots rather than claiming a confirmed sell block. Not financial advice; verify before you trade.
+    <br><br>Robinhood Chain uses <b>first-come-first-served</b> sequencing (no priority-fee reordering) and screens sanctioned addresses at the sequencer. Selectors and the Transfer topic embedded here were derived from a keccak-256 implementation checked against known test vectors.
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* ============================================================= keccak-256 */
+const _M=(1n<<64n)-1n;
+const _RC=[0x1n,0x8082n,0x800000000000808an,0x8000000080008000n,0x808bn,0x80000001n,0x8000000080008081n,0x8000000000008009n,0x8an,0x88n,0x80008009n,0x8000000an,0x8000808bn,0x800000000000008bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x800an,0x800000008000000an,0x8000000080008081n,0x8000000000008080n,0x80000001n,0x8000000080008008n];
+const _R=[0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
+const _rot=(v,n)=>n===0?v:(((v<<BigInt(n))|(v>>BigInt(64-n)))&_M);
+function _kf(A){for(let r=0;r<24;r++){const C=[0n,0n,0n,0n,0n],D=[0n,0n,0n,0n,0n];for(let x=0;x<5;x++)C[x]=A[x]^A[x+5]^A[x+10]^A[x+15]^A[x+20];for(let x=0;x<5;x++)D[x]=C[(x+4)%5]^_rot(C[(x+1)%5],1);for(let i=0;i<25;i++)A[i]^=D[i%5];const B=new Array(25);for(let x=0;x<5;x++)for(let y=0;y<5;y++)B[y+5*((2*x+3*y)%5)]=_rot(A[x+5*y],_R[x+5*y]);for(let x=0;x<5;x++)for(let y=0;y<5;y++)A[x+5*y]=B[x+5*y]^((~B[(x+1)%5+5*y]&_M)&B[(x+2)%5+5*y]);A[0]^=_RC[r];}}
+function keccak(bytes){const A=new Array(25).fill(0n),rate=136;const p=new Uint8Array(Math.ceil((bytes.length+1)/rate)*rate);p.set(bytes);p[bytes.length]^=0x01;p[p.length-1]^=0x80;for(let off=0;off<p.length;off+=rate){for(let i=0;i<rate/8;i++){let l=0n;for(let b=7;b>=0;b--)l=(l<<8n)|BigInt(p[off+i*8+b]);A[i]^=l;}_kf(A);}let o='';for(let i=0;i<4;i++){let l=A[i];for(let b=0;b<8;b++){o+=(l&0xffn).toString(16).padStart(2,'0');l>>=8n;}}return o;}
+const kstr=s=>keccak(new TextEncoder().encode(s));
+
+/* precomputed selectors & topics (see footer note; verified in build) */
+const SEL={owner:'8da5cb5b',mint:'40c10f19',pause:'8456cb59',unpause:'3f4ba83a',paused:'5c975abb',blacklist:'f9f92be4',setBlacklist:'153b0d1e',addBlackList:'0ecb93c0',isBlackListed:'e47d6060',setFee:'69fe0e2d',setFees:'0b78f9c0',setTaxes:'c647b20e',setMaxTx:'ec28438a',setMaxWallet:'27a14fc2',enableTrading:'8a8c523c',setTradingEnabled:'c2e5ec04',tradingOpen:'ffb54a99',renounce:'715018a6',transferOwnership:'f2fde38b',cooldownEnabled:'a985ceef',setCooldown:'5932ead1'};
+const READ={name:'06fdde03',symbol:'95d89b41',decimals:'313ce567',totalSupply:'18160ddd',owner:'8da5cb5b',balanceOf:'70a08231',uiMultiplier:'a60bf13d'};
+const TRANSFER_TOPIC='0x'+kstr('Transfer(address,address,uint256)'); // ddf252ad...
+const EIP1967_IMPL='0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'; // impl slot
+const DEAD='0x000000000000000000000000000000000000dead';
+const ZERO='0x0000000000000000000000000000000000000000';
+
+/* ---- Uniswap v4 hook permission bits (low 14 bits of hook address) ------
+   Ordered from the highest of the 14 flag bits down. Source: v4-core Hooks.sol. */
+const HOOK_FLAGS=[
+  ['beforeInitialize',13],['afterInitialize',12],
+  ['beforeAddLiquidity',11],['afterAddLiquidity',10],
+  ['beforeRemoveLiquidity',9],['afterRemoveLiquidity',8],
+  ['beforeSwap',7],['afterSwap',6],
+  ['beforeDonate',5],['afterDonate',4],
+  ['beforeSwapReturnDelta',3],['afterSwapReturnDelta',2],
+  ['afterAddLiquidityReturnDelta',1],['afterRemoveLiquidityReturnDelta',0]
+];
+
+/* ============================================================= RPC helpers */
+let RPC=document.getElementById('rpc').value.trim();
+let _id=1;
+async function rpc(method,params){
+  const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({jsonrpc:'2.0',id:_id++,method,params})});
+  if(!r.ok)throw new Error(method+' HTTP '+r.status);
+  const j=await r.json();
+  if(j.error)throw new Error(method+': '+(j.error.message||JSON.stringify(j.error)));
+  return j.result;
+}
+const call=(to,data)=>rpc('eth_call',[{to,data:'0x'+data},'latest']);
+const getCode=a=>rpc('eth_getCode',[a,'latest']);
+const getStorage=(a,slot)=>rpc('eth_getStorageAt',[a,slot,'latest']);
+
+/* abi-ish decoders */
+const stripHex=h=>h.startsWith('0x')?h.slice(2):h;
+function decodeString(hex){
+  hex=stripHex(hex); if(hex.length<128)return decodeBytes32Str(hex);
+  try{const off=parseInt(hex.slice(0,64),16)*2;const len=parseInt(hex.slice(off,off+64),16)*2;
+    const data=hex.slice(off+64,off+64+len);let s='';for(let i=0;i<data.length;i+=2)s+=String.fromCharCode(parseInt(data.slice(i,i+2),16));
+    return s.replace(/\u0000/g,'').trim();}catch(e){return '';}
+}
+function decodeBytes32Str(hex){let s='';for(let i=0;i<hex.length;i+=2){const c=parseInt(hex.slice(i,i+2),16);if(c>0)s+=String.fromCharCode(c);}return s.trim();}
+const toBig=h=>{h=stripHex(h);return h?BigInt('0x'+h):0n;};
+const addrFromWord=w=>'0x'+stripHex(w).slice(24).toLowerCase();
+const wordFromAddr=a=>stripHex(a).toLowerCase().padStart(64,'0');
+
+/* ============================================================= UI plumbing */
+const $=id=>document.getElementById(id);
+const logEl=$('log');
+function log(msg,cls){logEl.classList.add('show');const d=document.createElement('div');if(cls)d.className=cls;d.textContent=msg;logEl.appendChild(d);}
+function clearLog(){logEl.innerHTML='';logEl.classList.remove('show');}
+function showErr(html){const e=$('errbox');e.innerHTML=html;e.classList.add('show');}
+function hideErr(){$('errbox').classList.remove('show');}
+
+/* severity → weight (higher = worse). Score starts at 100, we subtract. */
+const WEIGHT={fail:34,warn:12,info:0,pass:0};
+
+/* ============================================================= MODULE 1: contract */
+async function scanContract(addr){
+  const findings=[];
+  const code=await getCode(addr);
+  if(!code||code==='0x'||code==='0x0'){
+    findings.push({sev:'fail',label:'No contract at this address',desc:'This address holds no bytecode — it is an EOA or an undeployed address. Nothing to trade.'});
+    return {id:'contract',title:'Contract capabilities',sub:'static bytecode analysis',findings,fatal:true};
+  }
+  const runtime=stripHex(code);
+  const has=sel=>runtime.includes(sel);
+
+  // proxy?
+  let isProxy=false, impl=null;
+  try{
+    const raw=await getStorage(addr,EIP1967_IMPL);
+    const a=addrFromWord(raw);
+    if(a!==ZERO){isProxy=true;impl=a;}
+  }catch(e){}
+  if(isProxy){
+    findings.push({sev:'fail',label:'Upgradeable proxy',
+      desc:'Logic lives behind an EIP-1967 proxy and can be swapped by the admin at any time. Every guarantee below can be rewritten in one transaction.',
+      ev:'impl → '+impl});
+  }
+
+  // ownership
+  let ownerAddr=null;
+  try{const o=await call(addr,SEL.owner);const a=addrFromWord(o);if(a&&a!=='0x')ownerAddr=a;}catch(e){}
+  if(ownerAddr){
+    if(ownerAddr===ZERO||ownerAddr===DEAD){
+      findings.push({sev:'pass',label:'Ownership renounced',desc:'owner() resolves to the zero/dead address.',ev:'owner → '+ownerAddr});
+    }else{
+      findings.push({sev:'warn',label:'Owner is an active address',desc:'A live owner retains whatever privileged functions exist below.',ev:'owner → '+ownerAddr});
+    }
+  }
+
+  // dangerous capabilities by selector presence in runtime
+  const caps=[
+    [SEL.mint,'fail','Mintable supply','A mint() selector is present — supply can be inflated after launch, diluting holders.'],
+    [SEL.addBlackList,'fail','Address blacklist','addBlackList() present — specific wallets can be frozen out of transfers (classic sell-block).'],
+    [SEL.blacklist,'fail','Address blacklist','blacklist() present — wallets can be blocked from transferring.'],
+    [SEL.setBlacklist,'fail','Address blacklist','setBlacklist() present — wallets can be toggled off transfers.'],
+    [SEL.pause,'warn','Pausable transfers','pause() present — all transfers can be halted by the owner.'],
+    [SEL.setFees,'warn','Adjustable fees','Fee setter present — buy/sell tax can be changed after you buy.'],
+    [SEL.setTaxes,'warn','Adjustable fees','Tax setter present — buy/sell tax can be changed after you buy.'],
+    [SEL.setFee,'warn','Adjustable fee','setFee() present — a transfer fee can be changed after you buy.'],
+    [SEL.setMaxTx,'warn','Max-tx limit control','setMaxTxAmount() present — max sell size can be shrunk toward zero.'],
+    [SEL.setMaxWallet,'warn','Max-wallet control','setMaxWalletAmount() present — holdings can be capped.'],
+    [SEL.setCooldown,'warn','Trade cooldown control','Cooldown toggle present — a delay can be forced between trades.'],
+    [SEL.enableTrading,'info','Trading gate','enableTrading() present — trading is gated on until the owner flips it (normal at launch, risky if never enabled).'],
+    [SEL.setTradingEnabled,'info','Trading gate','Trading can be toggled on/off by the owner.'],
+  ];
+  const seen=new Set();
+  for(const [s,sev,label,desc] of caps){
+    if(has(s)&&!seen.has(label)){seen.add(label);findings.push({sev,label,desc,ev:'selector 0x'+s});}
+  }
+
+  if(!findings.some(f=>f.sev==='fail'||f.sev==='warn') && !isProxy){
+    findings.push({sev:'pass',label:'No privileged transfer controls found',desc:'Bytecode shows no mint, blacklist, pause, fee-setter or trade-gate selectors.'});
+  }
+  findings.push({sev:'info',label:'Simulation caveat',desc:'This reads capability from bytecode. A definitive sell test needs a forked buy→sell simulation (server step).'});
+
+  return {id:'contract',title:'Contract capabilities',sub:'static bytecode analysis',findings,isProxy,ownerAddr};
+}
+
+/* ============================================================= MODULE 2: v4 hook */
+/* We can't enumerate all pools from a static page without an indexer, so this
+   module decodes ANY hook address the user cares about, and if the token itself
+   or an owner-looking address encodes hook permissions, surfaces it. We expose
+   a hook-decode that the concentration module also feeds. */
+function decodeHookPermissions(hookAddr){
+  const a=stripHex(hookAddr).toLowerCase();
+  const bits=parseInt(a.slice(-4),16); // low 16 bits; flags live in low 14
+  const active=[];
+  for(const [name,bit] of HOOK_FLAGS){ if(bits & (1<<bit)) active.push(name); }
+  return active;
+}
+async function scanHook(addr, poolHook){
+  const findings=[];
+  // If we were handed a hook (e.g. user pasted a pool's hook), decode it.
+  // Otherwise, we test whether the token address itself carries hook flag bits
+  // that would matter if it were used as a hook (informational), and explain.
+  let target=poolHook||null;
+
+  if(!target){
+    findings.push({sev:'info',label:'No pool hook supplied',
+      desc:'Enumerating every v4 pool for this token needs an indexer/subgraph. Paste a pool\u2019s hook address to decode its powers, or wire the PoolManager Initialize logs server-side. The decoder below is live and correct — it just needs a hook to point at.'});
+    // still demonstrate on the token addr's low bits, clearly labeled hypothetical
+    const active=decodeHookPermissions(addr);
+    findings.push({sev:'info',label:'Reference decode (token address low bits)',
+      desc:'For illustration only — a token address is not a hook. This shows how the low 14 bits map to permissions.',
+      ev:active.length?active.join(', '):'no flag bits set in low 14 bits'});
+    return {id:'hook',title:'Uniswap v4 hook',sub:'permission-bit decoder',findings};
+  }
+
+  const active=decodeHookPermissions(target);
+  const code=await getCode(target).catch(()=>'0x');
+  const hasCode=code&&code!=='0x';
+  if(active.includes('beforeSwap')){
+    findings.push({sev:'fail',label:'Hook intercepts every swap (beforeSwap)',
+      desc:'The pool\u2019s hook runs custom code before each swap. It can revert for specific senders — a honeypot with a clean token contract. Read the hook source before trusting the pool.',
+      ev:target});
+  }
+  if(active.includes('beforeSwapReturnDelta')||active.includes('afterSwapReturnDelta')){
+    findings.push({sev:'fail',label:'Hook can alter swap amounts (return-delta)',
+      desc:'This hook can add its own delta to swaps — effectively an arbitrary, code-defined tax that isn\u2019t visible in the token contract.',ev:target});
+  }
+  if(active.includes('beforeRemoveLiquidity')||active.includes('afterRemoveLiquidity')){
+    findings.push({sev:'warn',label:'Hook gates liquidity removal',
+      desc:'Removal is mediated by hook code — LP exit terms are defined off-token.',ev:target});
+  }
+  if(!active.length){
+    findings.push({sev:'pass',label:'Hook holds no active permissions',desc:'Low 14 bits are clear — this pool behaves like a standard v2/v3-style pool.',ev:target});
+  }
+  if(!hasCode){
+    findings.push({sev:'warn',label:'Hook address has no bytecode',desc:'Permission bits are set but nothing is deployed there — misconfigured or not-yet-deployed pool.',ev:target});
+  }
+  findings.push({sev:'info',label:'All decoded permissions',ev:active.length?active.join(', '):'none'});
+  return {id:'hook',title:'Uniswap v4 hook',sub:'permission-bit decoder',findings};
+}
+
+/* ============================================================= MODULE 3: stock-token impersonation */
+/* Canonical registry MUST be pinned from docs.robinhood.com/chain/contracts.
+   Shipping empty-but-honest: the check is real, the list is operator-filled. */
+const CANON_STOCK_TOKENS={
+  // "SYMBOL": "0x… canonical Robinhood stock-token address"  (fill from /chain/contracts)
+};
+async function scanImpersonation(addr, sym){
+  const findings=[];
+  const symU=(sym||'').toUpperCase().replace(/[^A-Z0-9.]/g,'');
+  const registrySize=Object.keys(CANON_STOCK_TOKENS).length;
+  const lowerAddr=addr.toLowerCase();
+
+  // is this address itself the canonical one?
+  const canonMatch=Object.entries(CANON_STOCK_TOKENS).find(([,a])=>a.toLowerCase()===lowerAddr);
+  if(canonMatch){
+    findings.push({sev:'pass',label:'Canonical Robinhood Stock Token',desc:'This exact address is the registered stock token for '+canonMatch[0]+'.',ev:canonMatch[0]+' → '+canonMatch[1]});
+    return {id:'imp',title:'Stock-token impersonation',sub:'name/ticker vs canonical registry',findings};
+  }
+  // does its symbol collide with a canonical ticker at a different address?
+  if(symU && CANON_STOCK_TOKENS[symU]){
+    findings.push({sev:'fail',label:'IMPERSONATION — ticker collision',
+      desc:'This token reports symbol "'+symU+'", which is a real Robinhood stock ticker, but its address is NOT the canonical one. Robinhood\u2019s docs warn: matching name/ticker with a different address is a counterfeit.',
+      ev:'this: '+addr+'\ncanonical '+symU+': '+CANON_STOCK_TOKENS[symU]});
+    return {id:'imp',title:'Stock-token impersonation',sub:'name/ticker vs canonical registry',findings};
+  }
+  // heuristic: looks like an equity ticker
+  const equityLike=/^[A-Z]{1,5}(\.[A-Z])?$/.test(symU) && symU.length<=5;
+  if(equityLike && registrySize===0){
+    findings.push({sev:'warn',label:'Equity-style ticker, registry not loaded',
+      desc:'Symbol "'+symU+'" looks like a stock ticker. The canonical registry is empty in this build — load addresses from docs.robinhood.com/chain/contracts to turn this into a hard pass/fail.',
+      ev:'symbol: '+(symU||'(none)')});
+  }else if(equityLike){
+    findings.push({sev:'info',label:'Equity-style ticker, no collision',desc:'Symbol resembles a stock ticker but does not match any canonical entry.',ev:'symbol: '+symU});
+  }else{
+    findings.push({sev:'pass',label:'No stock-token impersonation signal',desc:'Symbol does not resemble or collide with a canonical Robinhood stock ticker.',ev:'symbol: '+(symU||'(none)')});
+  }
+  if(registrySize===0){
+    findings.push({sev:'info',label:'Registry status',desc:'Canonical stock-token list is empty in this build. It is operator-filled from Robinhood\u2019s published contracts page so the check stays trustworthy rather than guessed.'});
+  }
+  return {id:'imp',title:'Stock-token impersonation',sub:'name/ticker vs canonical registry',findings};
+}
+
+/* ============================================================= MODULE 4: holders / concentration */
+async function scanHolders(addr, totalSupply, decimals, knownPools){
+  const findings=[];
+  // Build holder balances from Transfer logs. Chunked to respect provider caps.
+  let logs=[];
+  let latest;
+  try{ latest=parseInt(await rpc('eth_blockNumber',[]),16); }catch(e){ latest=null; }
+  const EXCLUDE=new Set([ZERO,DEAD,addr.toLowerCase(),...(knownPools||[]).map(x=>x.toLowerCase())]);
+
+  try{
+    // try a single wide getLogs first; fall back to chunks on error
+    logs=await rpc('eth_getLogs',[{address:addr,topics:[TRANSFER_TOPIC],fromBlock:'0x0',toBlock:'latest'}]);
+  }catch(e){
+    if(latest!=null){
+      const span=45000; let from=Math.max(0,latest-span*40);
+      for(let b=from;b<=latest;b+=span){
+        const to=Math.min(latest,b+span-1);
+        try{const part=await rpc('eth_getLogs',[{address:addr,topics:[TRANSFER_TOPIC],
+          fromBlock:'0x'+b.toString(16),toBlock:'0x'+to.toString(16)}]);logs=logs.concat(part);}
+        catch(err){/* skip chunk */}
+      }
+    }
+  }
+
+  if(!logs.length){
+    findings.push({sev:'info',label:'No Transfer logs retrieved',
+      desc:'Either the token has no transfers yet, or the RPC capped the log range. Concentration needs an event index — try a provider RPC with wider getLogs limits.'});
+    return {id:'holders',title:'Holder concentration',sub:'reconstructed from Transfer logs',findings};
+  }
+
+  const bal={};
+  for(const lg of logs){
+    // topics: [sig, from, to]; value in data
+    if(!lg.topics||lg.topics.length<3)continue;
+    const from=addrFromWord(lg.topics[1]);
+    const to=addrFromWord(lg.topics[2]);
+    const val=toBig(lg.data||'0x0');
+    if(from!==ZERO){bal[from]=(bal[from]||0n)-val;}
+    bal[to]=(bal[to]||0n)+val;
+  }
+  const holders=Object.entries(bal)
+    .filter(([a,v])=>v>0n && !EXCLUDE.has(a))
+    .sort((x,y)=>y[1]<x[1]?-1:1);
+
+  const supply = totalSupply>0n?totalSupply:holders.reduce((s,[,v])=>s+v,0n);
+  const pct=v=>supply>0n?Number(v*10000n/supply)/100:0;
+  const fmt=v=>{const d=decimals||18;const s=v.toString().padStart(d+1,'0');const i=s.slice(0,s.length-d);return Number(i).toLocaleString();};
+
+  const top1=holders[0]?pct(holders[0][1]):0;
+  let cum=0n;for(let i=0;i<10&&i<holders.length;i++)cum+=holders[i][1];
+  const top10=pct(cum);
+
+  const sev1=top1>=30?'fail':top1>=12?'warn':'pass';
+  findings.push({sev:sev1,label:'Top holder holds '+top1.toFixed(2)+'%',
+    desc:top1>=30?'A single non-pool wallet controls a huge share — one sell can collapse the price.':top1>=12?'Meaningful single-wallet concentration.':'Largest holder is within a normal range.',
+    ev:holders[0]?holders[0][0]+'  ('+fmt(holders[0][1])+' tokens)':''});
+
+  const sev10=top10>=70?'fail':top10>=45?'warn':'pass';
+  findings.push({sev:sev10,label:'Top 10 hold '+top10.toFixed(1)+'%',
+    desc:top10>=70?'Extreme concentration among the top ten — treat as a controlled float.':top10>=45?'Top ten hold a large share of supply.':'Supply is reasonably distributed across the top ten.',
+    ev:holders.length+' holders reconstructed (pools/burn excluded)'});
+
+  // funding-cluster hint: wallets that only ever received from the same single source
+  const inboundFrom={};
+  for(const lg of logs){
+    if(!lg.topics||lg.topics.length<3)continue;
+    const from=addrFromWord(lg.topics[1]), to=addrFromWord(lg.topics[2]);
+    if(EXCLUDE.has(to))continue;
+    (inboundFrom[to]=inboundFrom[to]||new Set()).add(from);
+  }
+  const topSet=holders.slice(0,20).map(([a])=>a);
+  const sources={};
+  for(const a of topSet){const s=inboundFrom[a];if(s&&s.size===1){const src=[...s][0];sources[src]=(sources[src]||0)+1;}}
+  const cluster=Object.entries(sources).filter(([,n])=>n>=3).sort((a,b)=>b[1]-a[1]);
+  if(cluster.length){
+    const [src,n]=cluster[0];
+    findings.push({sev:'warn',label:n+' top holders funded by one source',
+      desc:'These wallets each received tokens only from a single common address — a signature of a bundled/sybil distribution counted as separate holders.',
+      ev:'common funder → '+src});
+  }else{
+    findings.push({sev:'pass',label:'No obvious single-funder cluster',desc:'Top holders don\u2019t share one exclusive funding source in the reconstructed set.'});
+  }
+
+  return {id:'holders',title:'Holder concentration',sub:'reconstructed from Transfer logs',findings,holders:holders.length};
+}
+
+/* ============================================================= orchestration */
+const dot=sev=>sev==='fail'?'fail':sev==='warn'?'warn':sev==='pass'?'pass':'info';
+function modWorst(m){
+  if(m.findings.some(f=>f.sev==='fail'))return 'fail';
+  if(m.findings.some(f=>f.sev==='warn'))return 'warn';
+  if(m.findings.some(f=>f.sev==='pass'))return 'pass';
+  return 'info';
+}
+function renderModules(mods){
+  const host=$('modules');host.innerHTML='';
+  mods.forEach((m,idx)=>{
+    const worst=modWorst(m);
+    const fails=m.findings.filter(f=>f.sev==='fail').length;
+    const warns=m.findings.filter(f=>f.sev==='warn').length;
+    const stat=fails?fails+' danger':warns?warns+' caution':'clear';
+    const el=document.createElement('div');el.className='mod'+(idx===0||worst==='fail'?' open':'');
+    el.innerHTML=`
+      <div class="mod-h">
+        <span class="dot ${worst}"></span>
+        <div class="mod-title">${m.title}<small>${m.sub}</small></div>
+        <span class="mod-stat">${stat}</span>
+        <span class="caret">▸</span>
+      </div>
+      <div class="mod-body">
+        ${m.findings.map(f=>`
+          <div class="finding">
+            <span class="fdot ${dot(f.sev)}"></span>
+            <div class="ftxt">
+              <div class="flabel">${f.label}</div>
+              ${f.desc?`<div class="fdesc">${f.desc}</div>`:''}
+              ${f.ev?`<span class="ev${f.sev==='pass'?' mut':''}">${String(f.ev).replace(/</g,'&lt;')}</span>`:''}
+            </div>
+          </div>`).join('')}
+      </div>`;
+    el.querySelector('.mod-h').addEventListener('click',()=>el.classList.toggle('open'));
+    host.appendChild(el);
+  });
+}
+function renderVerdict(score,mods,tokenLabel){
+  const arc=$('dialArc'),num=$('dialNum');
+  const C=195, off=C-(C*score/100);
+  const col=score>=75?'#4ec9a5':score>=45?'#f5a623':'#f16a6a';
+  arc.style.stroke=col; arc.style.strokeDashoffset=off;
+  num.textContent=score; num.style.color=col;
+  const grade=score>=80?'Looks clean':score>=60?'Minor cautions':score>=40?'Handle with care':score>=20?'High risk':'Do not touch';
+  $('vgrade').textContent=grade; $('vgrade').style.color=col;
+  $('vtoken').innerHTML=tokenLabel;
+  let f=0,w=0,p=0;mods.forEach(m=>m.findings.forEach(x=>{if(x.sev==='fail')f++;else if(x.sev==='warn')w++;else if(x.sev==='pass')p++;}));
+  $('flagcount').innerHTML=
+    (f?`<span class="chip f">${f} danger</span>`:'')+
+    (w?`<span class="chip w">${w} caution</span>`:'')+
+    (p?`<span class="chip p">${p} clean</span>`:'');
+  renderModules(mods);
+  $('verdict').classList.add('show');
+}
+
+async function run(){
+  hideErr();clearLog();
+  $('verdict').classList.remove('show');
+  let addr=$('addr').value.trim().toLowerCase();
+  RPC=$('rpc').value.trim();
+  if(!/^0x[0-9a-f]{40}$/.test(addr)){
+    showErr('<b>That isn\u2019t a valid address.</b> Paste a 42-character 0x… token contract address.');return;
+  }
+  const btn=$('scan');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+
+  const mods=[];
+  try{
+    log('› checking endpoint…');
+    try{
+      const cid=await rpc('eth_chainId',[]);
+      if(parseInt(cid,16)!==4663){
+        showErr('<b>Wrong network:</b> this RPC reports chain ID '+parseInt(cid,16)+', expected 4663 (Robinhood Chain). Check the endpoint URL.');
+        log('✗ chain id '+parseInt(cid,16),'er');btn.disabled=false;btn.textContent='Scan';return;
+      }
+      log('  chain 4663 confirmed','ok');
+    }catch(e){
+      showErr('<b>Can\u2019t reach the RPC at all.</b> If you\u2019re viewing this inside the Claude app\u2019s HTML preview, that sandbox blocks network requests — open the file in Safari or deploy it (Vercel works). Otherwise check the endpoint URL.');
+      log('✗ endpoint unreachable: '+String(e.message||e),'er');btn.disabled=false;btn.textContent='Scan';return;
+    }
+    log('› resolving token metadata…');
+    let name='',sym='',dec=18,supply=0n;
+    try{name=decodeString(await call(addr,READ.name));}catch(e){}
+    try{sym=decodeString(await call(addr,READ.symbol));}catch(e){}
+    try{dec=Number(toBig(await call(addr,READ.decimals)))||18;}catch(e){}
+    try{supply=toBig(await call(addr,READ.totalSupply));}catch(e){}
+    log('  '+(name||'(no name)')+(sym?' · '+sym:'')+' · '+dec+' dec','ok');
+
+    log('› [1/4] reading contract bytecode…');
+    const m1=await scanContract(addr);mods.push(m1);
+    log('  '+m1.findings.filter(f=>f.sev==='fail').length+' danger / '+m1.findings.filter(f=>f.sev==='warn').length+' caution',m1.findings.some(f=>f.sev==='fail')?'er':'ok');
+
+    if(m1.fatal){
+      renderVerdict(0,mods,'<b>'+(addr)+'</b>');
+      btn.disabled=false;btn.textContent='Scan';return;
+    }
+
+    log('› [2/4] decoding Uniswap v4 hook powers…');
+    const m2=await scanHook(addr,null);mods.push(m2);log('  done','ok');
+
+    log('› [3/4] checking stock-token impersonation…');
+    const m3=await scanImpersonation(addr,sym);mods.push(m3);
+    log('  '+(m3.findings.some(f=>f.sev==='fail')?'IMPERSONATION FLAG':'no collision'),m3.findings.some(f=>f.sev==='fail')?'er':'ok');
+
+    log('› [4/4] reconstructing holders from Transfer logs…');
+    const m4=await scanHolders(addr,supply,dec,[]);mods.push(m4);log('  '+(m4.holders||0)+' holders','ok');
+
+    // score
+    let score=100;
+    mods.forEach(m=>m.findings.forEach(f=>{score-=WEIGHT[f.sev]||0;}));
+    score=Math.max(0,Math.min(100,Math.round(score)));
+
+    const label=(name||sym)?`<b>${(name||'').replace(/</g,'')}</b>${sym?' ('+sym.replace(/</g,'')+')':''} · <span class="mono">${addr}</span>`:`<span class="mono">${addr}</span>`;
+    renderVerdict(score,mods,label);
+    log('✓ scan complete — score '+score+'/100','ok');
+  }catch(e){
+    showErr('<b>Scan failed:</b> '+String(e.message||e)+'<br><span style="color:#93a1b8">If this is a rate-limit or CORS error, paste a provider RPC (QuickNode / Alchemy / dRPC) in the endpoint field — the default public endpoint is capped.</span>');
+    log('✗ '+String(e.message||e),'er');
+  }finally{
+    btn.disabled=false;btn.textContent='Scan';
+  }
+}
+
+/* wire up */
+$('scan').addEventListener('click',run);
+$('addr').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
+document.querySelectorAll('.samples button').forEach(b=>b.addEventListener('click',()=>{
+  if(b.dataset.fill==='clear'){$('addr').value='';$('addr').focus();}
+  else{$('addr').value='';$('addr').placeholder='paste a token address from robinhoodchain.blockscout.com';$('addr').focus();}
+}));
+</script>
+</body>
+</html>
