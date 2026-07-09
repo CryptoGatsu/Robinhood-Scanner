@@ -289,7 +289,13 @@ const DEAD='0x000000000000000000000000000000000000dead';
 const LOCKERS=[];
 
 let _id=1;
-async function rpc(m,p){const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:_id++,method:m,params:p})});if(!r.ok)throw new Error(m+' HTTP '+r.status);const j=await r.json();if(j.error)throw new Error(m+': '+(j.error.message||''));return j.result;}
+async function rpc(m,p){
+  const r=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:_id++,method:m,params:p})});
+  let j=null;try{j=await r.json();}catch(e){}
+  if(j&&j.error){const e=new Error(j.error.message||'rpc error');e.rpc=j.error;throw e;}
+  if(!r.ok)throw new Error(m+' HTTP '+r.status);
+  return j?j.result:null;
+}
 const call=(to,data,from)=>rpc('eth_call',[Object.assign({to,data:'0x'+data},from?{from}:{}),'latest']);
 const getCode=a=>rpc('eth_getCode',[a,'latest']);
 const getStorage=(a,s)=>rpc('eth_getStorageAt',[a,s,'latest']);
@@ -567,7 +573,7 @@ async function renderTokenCard(addr,name,sym){
 const TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';
 const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
-const SCAN_BLOCKS=60000;      // ~4h on a 250ms-block Nitro chain
+const SCAN_BLOCKS=20000;      // 10 chunks of 2000; keeps the RPC budget sane
 const MAX_TOKENS=12;
 const CACHE_TTL=5*60*1000;
 
@@ -576,27 +582,62 @@ async function rpcBatch(reqs){
   if(!reqs.length)return [];
   const body=reqs.map((r,i)=>({jsonrpc:'2.0',id:i,method:r.method,params:r.params}));
   const res=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-  if(!res.ok)throw new Error('batch HTTP '+res.status);
-  const j=await res.json();
+  let j=null;try{j=await res.json();}catch(e){}
+  if(!j){if(!res.ok)throw new Error('batch HTTP '+res.status);return new Array(reqs.length).fill(null);}
+  if(j&&j.error&&!Array.isArray(j))throw new Error(j.error.message||'batch error');
   const out=new Array(reqs.length).fill(null);
   (Array.isArray(j)?j:[j]).forEach(r=>{if(r&&typeof r.id==='number'&&!r.error)out[r.id]=r.result;});
   return out;
 }
 
-/* adaptive getLogs: halve the range when the provider caps results */
-async function getLogsAdaptive(params,from,to,depth){
+/* Alchemy: eth_getLogs allows EITHER <=2000-block range (unlimited results)
+   OR any range capped at 10k logs. We always chunk to 2000 and batch the
+   chunks into few HTTP requests. On error we halve the offending chunk. */
+const MAX_RANGE=2000, MIN_RANGE=100, BATCH_SIZE=6;
+function planChunks(from,to,maxRange){
+  const out=[];for(let b=from;b<=to;b+=maxRange)out.push([b,Math.min(to,b+maxRange-1)]);return out;
+}
+function parseRangeHint(msg){
+  const m=/\[?(0x[0-9a-fA-F]+)[,\s]+(0x[0-9a-fA-F]+)\]?/.exec(msg||'');
+  if(!m)return null;
+  const a=parseInt(m[1],16),b=parseInt(m[2],16);
+  return (isFinite(a)&&isFinite(b)&&b>=a)?(b-a+1):null;
+}
+async function getLogsChunk(params,from,to,depth){
   depth=depth||0;
   try{
     return await rpc('eth_getLogs',[Object.assign({},params,{
       fromBlock:'0x'+from.toString(16),toBlock:'0x'+to.toString(16)})]);
   }catch(e){
-    if(depth>=4||to-from<400)return [];
-    const mid=Math.floor((from+to)/2);
+    if(depth>=6||to-from+1<=MIN_RANGE)return [];
+    const hint=parseRangeHint(e.message);
+    let mid;
+    if(hint&&hint>=MIN_RANGE&&hint<(to-from+1))mid=from+hint-1;
+    else mid=Math.floor((from+to)/2);
+    if(mid>=to)mid=Math.floor((from+to)/2);
     const [a,b]=await Promise.all([
-      getLogsAdaptive(params,from,mid,depth+1),
-      getLogsAdaptive(params,mid+1,to,depth+1)]);
+      getLogsChunk(params,from,mid,depth+1),
+      getLogsChunk(params,mid+1,to,depth+1)]);
     return a.concat(b);
   }
+}
+async function getLogsAdaptive(params,from,to){
+  if(to<from)return [];
+  const chunks=planChunks(from,to,MAX_RANGE);
+  let all=[];
+  for(let i=0;i<chunks.length;i+=BATCH_SIZE){
+    const slice=chunks.slice(i,i+BATCH_SIZE);
+    const reqs=slice.map(c=>({method:'eth_getLogs',params:[Object.assign({},params,{
+      fromBlock:'0x'+c[0].toString(16),toBlock:'0x'+c[1].toString(16)})]}));
+    let res;
+    try{res=await rpcBatch(reqs);}catch(e){res=new Array(slice.length).fill(null);}
+    for(let k=0;k<slice.length;k++){
+      if(Array.isArray(res[k]))all=all.concat(res[k]);
+      else{const r=await getLogsChunk(params,slice[k][0],slice[k][1],0);all=all.concat(r);}
+    }
+    if(all.length>60000)break;
+  }
+  return all;
 }
 
 const _cache={};
