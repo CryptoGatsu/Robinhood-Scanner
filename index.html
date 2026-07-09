@@ -146,6 +146,50 @@
     border-top-color:#000;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+
+  /* ===== terminal ===== */
+  .tabs{display:flex;gap:6px;margin-top:18px;background:var(--surface);border:1px solid var(--line);
+    border-radius:10px;padding:4px}
+  .tab{flex:1;background:none;border:none;color:var(--fg-faint);font-family:inherit;font-size:12.5px;
+    font-weight:600;padding:9px;border-radius:7px;cursor:pointer;letter-spacing:-.005em}
+  .tab.on{background:var(--surface-2);color:var(--fg)}
+  .term{margin-top:10px}
+  .termhead{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--fg-faint);
+    margin-bottom:8px;font-family:'IBM Plex Mono',monospace}
+  .termhead button{background:none;border:none;color:var(--fg-faint);cursor:pointer;font-family:inherit;font-size:11px}
+  .termhead button:hover{color:var(--green)}
+  .tlist{display:grid;gap:6px}
+  .trow{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .trow-h{display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer}
+  .trow-h:hover{background:var(--surface-2)}
+  .tsym{font-weight:600;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+  .tname{color:var(--fg-faint);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
+  .chip{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-radius:4px;
+    padding:3px 6px;flex:0 0 auto}
+  .chip.clean{background:rgba(0,200,5,.13);color:var(--green);border:1px solid rgba(0,200,5,.3)}
+  .chip.bundled{background:rgba(255,184,0,.13);color:var(--amber);border:1px solid rgba(255,184,0,.3)}
+  .chip.unsafe{background:rgba(255,80,0,.13);color:var(--red);border:1px solid rgba(255,80,0,.3)}
+  .chip.unknown{background:#1a1c1a;color:var(--grey);border:1px solid var(--line)}
+  .chip.pend{background:#1a1c1a;color:var(--fg-faint);border:1px solid var(--line)}
+  .tstats{display:flex;gap:12px;padding:0 12px 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--fg-faint)}
+  .tstats b{color:var(--fg-dim);font-weight:500}
+  .tbody{display:none;border-top:1px solid var(--line);padding:12px}
+  .trow.open .tbody{display:block}
+  .twhy{font-size:12px;color:var(--fg-dim);margin-bottom:10px}
+  .tacts{display:flex;gap:6px;margin-top:10px}
+  .tacts button,.tacts a{flex:1;text-align:center;background:var(--surface-2);border:1px solid var(--line);
+    color:var(--fg-dim);border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;text-decoration:none}
+  .tacts button:hover,.tacts a:hover{color:var(--green);border-color:var(--green-dim)}
+  .chartbox{position:relative}
+  .chart-meta{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .chart-price{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600}
+  .chart-chg{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600}
+  .chg-up{color:var(--green)}.chg-dn{color:var(--red)}
+  .chart-kind{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-faint);font-weight:700;margin-bottom:6px}
+  svg.chart{width:100%;height:auto;display:block;touch-action:none;cursor:crosshair}
+  .chart-note{font-size:10.5px;color:var(--fg-faint);margin-top:7px;line-height:1.5;min-height:28px}
+  .cload{font-size:12px;color:var(--fg-faint);padding:14px 0;text-align:center}
 </style>
 </head>
 <body>
@@ -170,6 +214,16 @@
   <div class="recent" id="recent" style="display:none">
     <div class="recent-h"><span>Recently scanned</span><button id="clearRecent">clear</button></div>
     <div class="rlist" id="rlist"></div>
+  </div>
+
+
+  <div class="tabs">
+    <button class="tab on" data-tab="newest">Newest</button>
+    <button class="tab" data-tab="trending">Trending</button>
+  </div>
+  <div class="term">
+    <div class="termhead"><span id="termhead">scanning…</span><button id="termRefresh">refresh</button></div>
+    <div class="tlist" id="tlist"></div>
   </div>
 
   <div class="verdict" id="verdict">
@@ -210,6 +264,8 @@
 
 <script>
 "use strict";
+
+
 const RPC='https://robinhood-mainnet.g.alchemy.com/v2/bmmd7FRjvUwPIqLwtMOot';
 const SCOUT='https://robinhoodchain.blockscout.com';
 const DEXSCREEN='https://api.dexscreener.com/latest/dex/tokens/';
@@ -506,6 +562,174 @@ async function renderTokenCard(addr,name,sym){
   $('nolinks').textContent=socials.length?'':'No website or socials are published on-chain for this token. Any links you found elsewhere are unverified \u2014 scammers copy real projects\u2019 sites and handles.';
 }
 
+
+/* ============================ TERMINAL ============================ */
+const TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';
+const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
+const SCAN_BLOCKS=60000;      // ~4h on a 250ms-block Nitro chain
+const MAX_TOKENS=12;
+const CACHE_TTL=5*60*1000;
+
+/* batched JSON-RPC: one HTTP request, many calls */
+async function rpcBatch(reqs){
+  if(!reqs.length)return [];
+  const body=reqs.map((r,i)=>({jsonrpc:'2.0',id:i,method:r.method,params:r.params}));
+  const res=await fetch(RPC,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  if(!res.ok)throw new Error('batch HTTP '+res.status);
+  const j=await res.json();
+  const out=new Array(reqs.length).fill(null);
+  (Array.isArray(j)?j:[j]).forEach(r=>{if(r&&typeof r.id==='number'&&!r.error)out[r.id]=r.result;});
+  return out;
+}
+
+/* adaptive getLogs: halve the range when the provider caps results */
+async function getLogsAdaptive(params,from,to,depth){
+  depth=depth||0;
+  try{
+    return await rpc('eth_getLogs',[Object.assign({},params,{
+      fromBlock:'0x'+from.toString(16),toBlock:'0x'+to.toString(16)})]);
+  }catch(e){
+    if(depth>=4||to-from<400)return [];
+    const mid=Math.floor((from+to)/2);
+    const [a,b]=await Promise.all([
+      getLogsAdaptive(params,from,mid,depth+1),
+      getLogsAdaptive(params,mid+1,to,depth+1)]);
+    return a.concat(b);
+  }
+}
+
+const _cache={};
+function cacheGet(k){const v=_cache[k];if(v&&Date.now()-v.t<CACHE_TTL)return v.d;return null;}
+function cacheSet(k,d){_cache[k]={t:Date.now(),d};}
+
+/* discover newest + trending from one live log sweep */
+async function discoverTokens(){
+  const hit=cacheGet('discover');if(hit)return hit;
+  const latest=parseInt(await rpc('eth_blockNumber',[]),16);
+  const from=Math.max(0,latest-SCAN_BLOCKS);
+  const logs=await getLogsAdaptive({topics:[TOPIC_TRANSFER]},from,latest);
+  const firstMint={},activity={},lastBlock={};
+  for(const l of logs){
+    const a=(l.address||'').toLowerCase();if(!a)continue;
+    activity[a]=(activity[a]||0)+1;
+    const blk=parseInt(l.blockNumber,16);
+    if(!(a in lastBlock)||blk>lastBlock[a])lastBlock[a]=blk;
+    if(l.topics&&l.topics[1]===ZERO_TOPIC){
+      if(!(a in firstMint)||blk<firstMint[a])firstMint[a]=blk;
+    }
+  }
+  const newest=Object.entries(firstMint).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,b])=>({addr:a,block:b,txs:activity[a]||0}));
+  const trending=Object.entries(activity).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,n])=>({addr:a,txs:n,block:lastBlock[a]}));
+  const out={newest,trending,scanned:{from,to:latest,logs:logs.length}};
+  cacheSet('discover',out);
+  return out;
+}
+
+/* metadata for many tokens in one batched request each */
+async function enrich(list){
+  const reqs=[];
+  list.forEach(t=>{
+    reqs.push({method:'eth_call',params:[{to:t.addr,data:'0x'+READ.name},'latest']});
+    reqs.push({method:'eth_call',params:[{to:t.addr,data:'0x'+READ.symbol},'latest']});
+    reqs.push({method:'eth_call',params:[{to:t.addr,data:'0x'+READ.decimals},'latest']});
+    reqs.push({method:'eth_call',params:[{to:t.addr,data:'0x'+READ.totalSupply},'latest']});
+    reqs.push({method:'eth_getCode',params:[t.addr,'latest']});
+  });
+  const res=await rpcBatch(reqs);
+  list.forEach((t,i)=>{
+    const b=i*5;
+    t.name=res[b]?decodeString(res[b]):'';
+    t.sym=res[b+1]?decodeString(res[b+1]):'';
+    t.dec=res[b+2]?(Number(toBig(res[b+2]))||18):18;
+    t.supply=res[b+3]?toBig(res[b+3]):0n;
+    t.code=res[b+4]||'0x';
+  });
+  return list.filter(t=>t.code&&t.code!=='0x'&&(t.sym||t.name));
+}
+
+/* fast triage label: Unsafe > Bundled > Clean (quick check, not the full scan) */
+async function quickLabel(t){
+  const rt=strip(t.code),has=s=>rt.includes(s);
+  const danger = has(SEL.mint)||has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist);
+  let proxy=false;
+  try{const a=addrWord(await getStorage(t.addr,EIP1967_IMPL));if(a!==ZERO)proxy=true;}catch(e){}
+  if(danger||proxy){t.label='unsafe';t.why=proxy?'Upgradeable proxy \u2014 code can be rewritten':'Mint or blacklist function present';return t;}
+
+  let holders=null;
+  try{holders=(await scout('/api/v2/tokens/'+t.addr+'/holders')).items;}catch(e){}
+  if(!holders||!holders.length){t.label='unknown';t.why='No holder data yet';return t;}
+  const sys=new Set([ZERO,DEAD,t.addr.toLowerCase()]);
+  const rows=holders.map(h=>({addr:(h.address&&h.address.hash||h.address).toLowerCase(),
+    isC:!!(h.address&&h.address.is_contract),val:BigInt(h.value)})).filter(r=>r.val>0n&&!sys.has(r.addr))
+    .sort((a,b)=>b.val<a.val?-1:1);
+  const pool=(rows.find(r=>r.isC)||{}).addr||null;
+  t.pool=pool;
+  const wallets=rows.filter(r=>r.addr!==pool);
+  const total=t.supply>0n?t.supply:rows.reduce((s,r)=>s+r.val,0n);
+  if(total===0n){t.label='unknown';t.why='No supply';return t;}
+
+  /* bundle fingerprint: >=3 wallets holding an identical, non-dust balance */
+  const freq={};wallets.forEach(w=>{const k=w.val.toString();freq[k]=(freq[k]||0)+1;});
+  const minChunk=total/200n; // 0.5%
+  let equalCluster=0;
+  for(const k in freq)if(freq[k]>=3&&BigInt(k)>=minChunk)equalCluster=Math.max(equalCluster,freq[k]);
+
+  const top1=wallets.length?Number(wallets[0].val*10000n/total)/100:0;
+  let cum=0n;for(let i=0;i<10&&i<wallets.length;i++)cum+=wallets[i].val;
+  const top10=Number(cum*10000n/total)/100;
+
+  if(top1>=30||top10>=80){t.label='unsafe';t.why='Extreme concentration \u2014 top wallet '+top1.toFixed(1)+'%';}
+  else if(equalCluster>=3){t.label='bundled';t.why=equalCluster+' wallets hold identical amounts \u2014 likely one owner';}
+  else if(top10>=70){t.label='bundled';t.why='Top 10 hold '+top10.toFixed(0)+'%';}
+  else t.label='clean';
+  if(t.label==='clean')t.why='No mint/blacklist, no bundle pattern, spread ownership';
+  t.top1=top1;t.top10=top10;
+  return t;
+}
+
+/* market data per token (degrades to null) */
+async function marketFor(addr){
+  const k='mkt:'+addr;const c=cacheGet(k);if(c!==null)return c;
+  const m=await fetchMarket(addr);cacheSet(k,m);return m;
+}
+
+/* price series from pool Sync events; falls back to transfer activity */
+async function priceSeries(token){
+  if(!token.pool)return{kind:'none'};
+  const latest=parseInt(await rpc('eth_blockNumber',[]),16);
+  const from=Math.max(0,latest-SCAN_BLOCKS);
+  const logs=await getLogsAdaptive({address:token.pool,topics:[TOPIC_SYNC]},from,latest);
+  if(logs.length>=2){
+    /* which side is our token? */
+    let t0=null;try{t0=addrWord(await call(token.pool,READ.token0));}catch(e){}
+    const tokenIs0 = t0 && t0===token.addr.toLowerCase();
+    let qdec=18;
+    try{const q=tokenIs0?addrWord(await call(token.pool,READ.token1)):t0;
+      if(q)qdec=Number(toBig(await call(q,READ.decimals)))||18;}catch(e){}
+    const pts=[];
+    for(const l of logs){
+      const d=strip(l.data);if(d.length<128)continue;
+      const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
+      const base=tokenIs0?r0:r1, quote=tokenIs0?r1:r0;
+      const bdec=token.dec, qd=qdec;
+      if(base===0n)continue;
+      const S=10n**12n;
+      const scaled=quote*S*(10n**BigInt(bdec))/(base*(10n**BigInt(qd)));
+      const p=Number(scaled)/1e12;
+      if(isFinite(p)&&p>0)pts.push({x:parseInt(l.blockNumber,16),y:p});
+    }
+    if(pts.length>=2)return{kind:'price',pts};
+  }
+  /* fallback: transfer activity per block bucket \u2014 labeled honestly */
+  const tl=await getLogsAdaptive({address:token.addr,topics:[TOPIC_TRANSFER]},from,latest);
+  if(tl.length<2)return{kind:'none'};
+  const buckets={},B=Math.max(1,Math.floor(SCAN_BLOCKS/60));
+  tl.forEach(l=>{const b=Math.floor(parseInt(l.blockNumber,16)/B)*B;buckets[b]=(buckets[b]||0)+1;});
+  const pts=Object.entries(buckets).map(([b,n])=>({x:+b,y:n})).sort((a,b)=>a.x-b.x);
+  return{kind:'activity',pts};
+}
+
 /* ===== render ===== */
 const VWORD={fail:'Danger',warn:'Caution',pass:'Clear',unknown:'Unknown'};
 function renderModules(mods){
@@ -590,10 +814,132 @@ async function run(){
 $('scan').addEventListener('click',run);
 $('addr').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
 
+
+/* ===== chart ===== */
+function buildChart(pts,W,H,pad){
+  if(!pts||pts.length<2)return null;
+  const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);
+  const x0=Math.min.apply(null,xs),x1=Math.max.apply(null,xs);
+  let y0=Math.min.apply(null,ys),y1=Math.max.apply(null,ys);
+  if(y1===y0){y1=y0*1.001+1e-12;y0=y0*0.999;}
+  const sx=x=>x1===x0?W/2:pad+(x-x0)/(x1-x0)*(W-2*pad);
+  const sy=y=>H-pad-(y-y0)/(y1-y0)*(H-2*pad);
+  let d='M'+sx(pts[0].x).toFixed(2)+' '+sy(pts[0].y).toFixed(2);
+  for(let i=1;i<pts.length;i++)d+=' L'+sx(pts[i].x).toFixed(2)+' '+sy(pts[i].y).toFixed(2);
+  const area=d+' L'+sx(pts[pts.length-1].x).toFixed(2)+' '+(H-pad)+' L'+sx(pts[0].x).toFixed(2)+' '+(H-pad)+' Z';
+  return{d,area,sx,sy};
+}
+function fmtPrice(p){if(!isFinite(p)||p<=0)return '\u2014';return p>=1?p.toFixed(4):p.toPrecision(4);}
+function renderChart(host,series){
+  if(!series||series.kind==='none'||!series.pts||series.pts.length<2){
+    host.innerHTML='<div class="cload">No on-chain price history yet \u2014 too few pool updates to draw a chart.</div>';return;}
+  const isPrice=series.kind==='price',pts=series.pts,W=560,H=200,pad=16;
+  const c=buildChart(pts,W,H,pad);
+  const first=pts[0].y,last=pts[pts.length-1].y;
+  const chg=first>0?((last-first)/first*100):0;
+  const up=chg>=0,col=up?'#00c805':'#ff5000';
+  const uid='g'+Math.random().toString(36).slice(2,8);
+  const baseNote=(isPrice
+    ?'Reconstructed from the pool\u2019s recent reserve updates on-chain. Recent history only \u2014 not the token\u2019s full lifetime.'
+    :'No price pool found, so this shows how often the token moved, not what it costs.')+' Drag across the chart to inspect.';
+  host.innerHTML=
+    '<div class="chart-meta"><div><span class="chart-price">'+(isPrice?fmtPrice(last):last.toLocaleString())+'</span>'
+    +(isPrice?' <span style="color:var(--fg-faint);font-size:11px">quote/token</span>':'')+'</div>'
+    +'<div><span class="chart-chg '+(up?'chg-up':'chg-dn')+'">'+(up?'+':'')+chg.toFixed(1)+'%</span></div></div>'
+    +'<div class="chart-kind">'+(isPrice?'Price \u00b7 from pool reserves':'Transfer activity \u00b7 not price')+'</div>'
+    +'<svg class="chart" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
+    +'<defs><linearGradient id="'+uid+'" x1="0" y1="0" x2="0" y2="1">'
+    +'<stop offset="0%" stop-color="'+col+'" stop-opacity="0.28"/>'
+    +'<stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="'+c.area+'" fill="url(#'+uid+')"/>'
+    +'<path d="'+c.d+'" fill="none" stroke="'+col+'" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+    +'<line class="cx" x1="0" y1="0" x2="0" y2="'+H+'" stroke="'+col+'" stroke-width="1" stroke-opacity="0" stroke-dasharray="3 3"/>'
+    +'<circle class="cdot" cx="0" cy="0" r="3.5" fill="'+col+'" opacity="0"/></svg>'
+    +'<div class="chart-note">'+baseNote+'</div>';
+  const svg=host.querySelector('svg.chart'),cx=svg.querySelector('.cx'),dot=svg.querySelector('.cdot'),note=host.querySelector('.chart-note');
+  function at(clientX){
+    const r=svg.getBoundingClientRect();const px=(clientX-r.left)/r.width*W;
+    let best=0,bd=Infinity;
+    for(let i=0;i<pts.length;i++){const d=Math.abs(c.sx(pts[i].x)-px);if(d<bd){bd=d;best=i;}}
+    const p=pts[best];
+    cx.setAttribute('x1',c.sx(p.x));cx.setAttribute('x2',c.sx(p.x));cx.setAttribute('stroke-opacity','0.5');
+    dot.setAttribute('cx',c.sx(p.x));dot.setAttribute('cy',c.sy(p.y));dot.setAttribute('opacity','1');
+    note.textContent=(isPrice?'Price '+fmtPrice(p.y):'Transfers '+p.y)+'  \u00b7  block '+p.x.toLocaleString();
+  }
+  function off(){cx.setAttribute('stroke-opacity','0');dot.setAttribute('opacity','0');note.textContent=baseNote;}
+  svg.addEventListener('mousemove',e=>at(e.clientX));
+  svg.addEventListener('mouseleave',off);
+  svg.addEventListener('touchstart',e=>at(e.touches[0].clientX),{passive:true});
+  svg.addEventListener('touchmove',e=>at(e.touches[0].clientX),{passive:true});
+  svg.addEventListener('touchend',off);
+}
+
+/* ===== terminal ===== */
+let TERM_TAB='newest';
+const CHIP_TEXT={clean:'Clean',bundled:'Bundled',unsafe:'Unsafe',unknown:'No data',pend:'checking'};
+function tRow(t){
+  const el=document.createElement('div');el.className='trow';
+  const mc=t.mkt&&money(t.mkt.mcap),vol=t.mkt&&money(t.mkt.vol);
+  el.innerHTML='<div class="trow-h">'
+    +'<span class="tsym">'+esc(t.sym?'$'+t.sym:short(t.addr))+'</span>'
+    +'<span class="tname">'+esc(t.name||'')+'</span>'
+    +'<span class="chip '+(t.label||'pend')+'">'+CHIP_TEXT[t.label||'pend']+'</span></div>'
+    +'<div class="tstats"><span>MC <b>'+(mc||'\u2014')+'</b></span>'
+    +'<span>Vol24h <b>'+(vol||'\u2014')+'</b></span>'
+    +'<span>'+(t.txs!=null?t.txs.toLocaleString()+' transfers':'')+'</span></div>'
+    +'<div class="tbody"><div class="twhy">'+esc(t.why||'')+'</div>'
+    +'<div class="chartbox"><div class="cload">Loading chart\u2026</div></div>'
+    +'<div class="tacts"><button data-full="'+t.addr+'">Full scan</button>'
+    +'<a href="'+SCOUT+'/token/'+t.addr+'" target="_blank" rel="noopener">Explorer \u2197</a></div></div>';
+  el.querySelector('.trow-h').addEventListener('click',async()=>{
+    const wasOpen=el.classList.contains('open');
+    el.classList.toggle('open');
+    if(wasOpen||el._loaded)return;
+    el._loaded=true;
+    const box=el.querySelector('.chartbox');
+    try{const s=await priceSeries(t);renderChart(box,s);}
+    catch(e){box.innerHTML='<div class="cload">Couldn\u2019t load chart: '+esc(String(e.message||e))+'</div>';}
+  });
+  el.querySelector('[data-full]').addEventListener('click',ev=>{
+    ev.stopPropagation();$('addr').value=t.addr;window.scrollTo({top:0,behavior:'smooth'});run();});
+  return el;
+}
+async function loadTerminal(force){
+  const head=$('termhead'),list=$('tlist');
+  list.innerHTML='<div class="cload">Scanning recent chain activity\u2026</div>';
+  try{
+    if(force)delete _cache['discover'];
+    const d=await discoverTokens();
+    head.textContent='scanned '+d.scanned.logs.toLocaleString()+' transfers \u00b7 blocks '+d.scanned.from.toLocaleString()+'\u2013'+d.scanned.to.toLocaleString();
+    const raw=(TERM_TAB==='newest'?d.newest:d.trending).slice(0,MAX_TOKENS);
+    const toks=await enrich(raw.map(x=>Object.assign({},x)));
+    if(!toks.length){list.innerHTML='<div class="cload">No ERC-20 activity found in the last '+SCAN_BLOCKS.toLocaleString()+' blocks.</div>';return;}
+    list.innerHTML='';
+    const els=toks.map(t=>{const e=tRow(t);list.appendChild(e);return e;});
+    let i=0;
+    async function worker(){
+      while(i<toks.length){
+        const k=i++,t=toks[k];
+        try{await quickLabel(t);}catch(e){t.label='unknown';t.why='Check failed';}
+        try{t.mkt=await marketFor(t.addr);}catch(e){t.mkt=null;}
+        const fresh=tRow(t);els[k].replaceWith(fresh);els[k]=fresh;
+      }
+    }
+    await Promise.all([worker(),worker(),worker()]);
+  }catch(e){list.innerHTML='<div class="cload">Couldn\u2019t scan the chain: '+esc(String(e.message||e))+'</div>';}
+}
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');TERM_TAB=b.dataset.tab;loadTerminal(false);}));
+$('termRefresh').addEventListener('click',()=>loadTerminal(true));
+
+
 /* deep link: ?token=0x… */
 loadRecent();renderRecent();
 (function(){const q=new URLSearchParams(location.search).get('token');
   if(q&&/^0x[0-9a-fA-F]{40}$/.test(q)){$('addr').value=q.toLowerCase();run();}})();
+loadTerminal(false);
+
 </script>
 </body>
 </html>
