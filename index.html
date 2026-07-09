@@ -203,7 +203,7 @@
   </header>
 
   <div class="panel">
-    <input id="addr" class="mono" placeholder="0x\u2026 paste token address" autocomplete="off" spellcheck="false" />
+    <input id="addr" class="mono" placeholder="0x… paste token address" autocomplete="off" spellcheck="false" />
     <button id="scan" class="btn">Check this token</button>
     <div class="hint">Reads public blockchain data only. Never asks you to connect a wallet, sign, or send anything.</div>
     <div class="err-box" id="errbox"></div>
@@ -228,23 +228,23 @@
 
   <div class="verdict" id="verdict">
     <div class="banner" id="banner">
-      <div class="big" id="vbig">\u2014</div>
+      <div class="big" id="vbig">—</div>
       <div class="sub" id="vsub"></div>
       <div class="actions" id="actions"></div>
       <div class="buywarn" id="buywarn"></div>
     </div>
 
     <div class="stats">
-      <div class="stat"><div class="k">Market cap</div><div class="v" id="stMcap">\u2014</div></div>
-      <div class="stat"><div class="k">24h volume</div><div class="v" id="stVol">\u2014</div></div>
-      <div class="stat"><div class="k">Price</div><div class="v" id="stPrice">\u2014</div></div>
+      <div class="stat"><div class="k">Market cap</div><div class="v" id="stMcap">—</div></div>
+      <div class="stat"><div class="k">24h volume</div><div class="v" id="stVol">—</div></div>
+      <div class="stat"><div class="k">Price</div><div class="v" id="stPrice">—</div></div>
     </div>
 
     <div class="tokcard">
       <div class="tokrow">
         <div class="tokicon" id="tokicon">?</div>
         <div class="tokmeta">
-          <div class="tokname" id="tokname">\u2014</div>
+          <div class="tokname" id="tokname">—</div>
           <div class="toksym" id="toksym"></div>
           <div class="tokaddr mono" id="tokaddr"></div>
         </div>
@@ -256,8 +256,8 @@
     <div class="modules" id="modules"></div>
 
     <footer>
-      <b>Read this.</b> This tool reads public data and runs a live transfer simulation. It catches most obvious traps, but no scanner is perfect and a determined scammer can hide things \u2014 a green result is not a guarantee. Brand-new tokens are high risk by default. Always test with a tiny amount first. Not financial advice.
-      <div class="disclaimer">Independent, community-built tool. <b>Not affiliated with, endorsed by, or operated by Robinhood Markets, Inc.</b> \u201cRobinhood\u201d is used only to identify the public blockchain being scanned.</div>
+      <b>Read this.</b> This tool reads public data and runs a live transfer simulation. It catches most obvious traps, but no scanner is perfect and a determined scammer can hide things — a green result is not a guarantee. Brand-new tokens are high risk by default. Always test with a tiny amount first. Not financial advice.
+      <div class="disclaimer">Independent, community-built tool. <b>Not affiliated with, endorsed by, or operated by Robinhood Markets, Inc.</b> “Robinhood” is used only to identify the public blockchain being scanned.</div>
     </footer>
   </div>
 </div>
@@ -662,35 +662,61 @@ function parseRangeHint(msg){
   const a=parseInt(m[1],16),b=parseInt(m[2],16);
   return (isFinite(a)&&isFinite(b)&&b>=a)?(b-a+1):null;
 }
+let LOG_ERR=null;                 /* last real error text from the provider */
+let LOG_RANGE=null;               /* largest block range this endpoint accepts */
+const RANGE_RE=/range|size|limit|exceed|too many|too large|10000|block/i;
+
 async function getLogsChunk(params,from,to,depth){
   depth=depth||0;
   try{
     return await rpc('eth_getLogs',[Object.assign({},params,{
       fromBlock:'0x'+from.toString(16),toBlock:'0x'+to.toString(16)})]);
   }catch(e){
-    if(RATE_LIMITED||depth>=3||to-from+1<=MIN_RANGE)return [];
-    const hint=parseRangeHint(e.message);
+    const msg=String(e.message||e);
+    if(!LOG_ERR)LOG_ERR=msg;
+    /* Only a range/size complaint is worth splitting. Any other 400 means the
+       query shape is rejected — splitting just multiplies the same error. */
+    if(RATE_LIMITED||depth>=3||to-from+1<=MIN_RANGE||!RANGE_RE.test(msg))return [];
+    const hint=parseRangeHint(msg);
     let mid=(hint&&hint>=MIN_RANGE&&hint<(to-from+1))?from+hint-1:Math.floor((from+to)/2);
     if(mid>=to)mid=Math.floor((from+to)/2);
-    /* sequential, never parallel: a parallel retry is what triggers 429 storms */
     const a=await getLogsChunk(params,from,mid,depth+1);
     const b=await getLogsChunk(params,mid+1,to,depth+1);
     return a.concat(b);
   }
 }
+
+/* Find the biggest range the endpoint will actually serve, once per session. */
+async function probeLogRange(params,latest){
+  if(LOG_RANGE)return LOG_RANGE;
+  for(const r of [2000,1000,500,200,50]){
+    const from=Math.max(0,latest-r+1);
+    try{
+      await rpc('eth_getLogs',[Object.assign({},params,{
+        fromBlock:'0x'+from.toString(16),toBlock:'0x'+latest.toString(16)})]);
+      LOG_RANGE=r;return r;
+    }catch(e){ if(!LOG_ERR)LOG_ERR=String(e.message||e); if(RATE_LIMITED)break; }
+  }
+  LOG_RANGE=0;return 0;   /* 0 = chain-wide log queries unusable here */
+}
 async function getLogsAdaptive(params,from,to){
   if(to<from)return [];
-  const chunks=planChunks(from,to,MAX_RANGE);
+  const range=LOG_RANGE||MAX_RANGE;
+  const chunks=planChunks(from,to,range);
   let all=[];
   for(let i=0;i<chunks.length;i+=BATCH_SIZE){
     const slice=chunks.slice(i,i+BATCH_SIZE);
     const reqs=slice.map(c=>({method:'eth_getLogs',params:[Object.assign({},params,{
       fromBlock:'0x'+c[0].toString(16),toBlock:'0x'+c[1].toString(16)})]}));
     let res;
-    try{res=await rpcBatch(reqs);}catch(e){res=new Array(slice.length).fill(null);}
+    try{res=await rpcBatch(reqs);}catch(e){if(!LOG_ERR)LOG_ERR=String(e.message||e);break;}
     for(let k=0;k<slice.length;k++){
       if(Array.isArray(res[k]))all=all.concat(res[k]);
-      else{const r=await getLogsChunk(params,slice[k][0],slice[k][1],0);all=all.concat(r);}
+      else{
+        /* one retry, only if the provider complained about range/size */
+        const r=await getLogsChunk(params,slice[k][0],slice[k][1],0);
+        all=all.concat(r);
+      }
     }
     if(all.length>60000||RATE_LIMITED)break;
   }
@@ -701,25 +727,45 @@ const _cache={};
 function cacheGet(k){const v=_cache[k];if(v&&Date.now()-v.t<CACHE_TTL)return v.d;return null;}
 function cacheSet(k,d){_cache[k]={t:Date.now(),d};}
 
-/* discover newest + trending from one live log sweep */
+/* Discovery: live chain logs when the endpoint allows chain-wide getLogs,
+   otherwise the explorer's token index. Never a storm of failing requests. */
+async function discoverViaExplorer(){
+  const j=await scout('/api/v2/tokens?type=ERC-20');
+  const items=(j.items||[]).filter(t=>t.address||t.address_hash);
+  const rows=items.map(t=>({
+    addr:((t.address&&t.address.hash)||t.address_hash||t.address||'').toLowerCase(),
+    name:t.name||'',sym:t.symbol||'',
+    holders:Number(t.holders||t.holder_count||0)
+  })).filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr));
+  const trending=rows.slice().sort((a,b)=>b.holders-a.holders).slice(0,MAX_TOKENS);
+  const newest=rows.slice(0,MAX_TOKENS);   /* explorer order; not true creation order */
+  return{newest,trending,source:'explorer',scanned:null};
+}
 async function discoverTokens(){
   const hit=cacheGet('discover');if(hit)return hit;
   const latest=parseInt(await rpc('eth_blockNumber',[]),16);
-  const from=Math.max(0,latest-SCAN_BLOCKS);
-  const logs=await getLogsAdaptive({topics:[TOPIC_TRANSFER]},from,latest);
-  const firstMint={},activity={},lastBlock={};
-  for(const l of logs){
-    const a=(l.address||'').toLowerCase();if(!a)continue;
-    activity[a]=(activity[a]||0)+1;
-    const blk=parseInt(l.blockNumber,16);
-    if(!(a in lastBlock)||blk>lastBlock[a])lastBlock[a]=blk;
-    if(l.topics&&l.topics[1]===ZERO_TOPIC){
-      if(!(a in firstMint)||blk<firstMint[a])firstMint[a]=blk;
+  const filter={topics:[TOPIC_TRANSFER]};
+  const range=await probeLogRange(filter,latest);
+  let out;
+  if(range>=500){
+    const from=Math.max(0,latest-SCAN_BLOCKS);
+    const logs=await getLogsAdaptive(filter,from,latest);
+    if(logs.length){
+      const firstMint={},activity={},lastBlock={};
+      for(const l of logs){
+        const a=(l.address||'').toLowerCase();if(!a)continue;
+        activity[a]=(activity[a]||0)+1;
+        const blk=parseInt(l.blockNumber,16);
+        if(!(a in lastBlock)||blk>lastBlock[a])lastBlock[a]=blk;
+        if(l.topics&&l.topics[1]===ZERO_TOPIC){if(!(a in firstMint)||blk<firstMint[a])firstMint[a]=blk;}
+      }
+      const newest=Object.entries(firstMint).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,b])=>({addr:a,block:b,txs:activity[a]||0}));
+      const trending=Object.entries(activity).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,n])=>({addr:a,txs:n,block:lastBlock[a]}));
+      if(newest.length||trending.length)
+        out={newest,trending,source:'logs',scanned:{from,to:latest,logs:logs.length}};
     }
   }
-  const newest=Object.entries(firstMint).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,b])=>({addr:a,block:b,txs:activity[a]||0}));
-  const trending=Object.entries(activity).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,n])=>({addr:a,txs:n,block:lastBlock[a]}));
-  const out={newest,trending,scanned:{from,to:latest,logs:logs.length}};
+  if(!out)out=await discoverViaExplorer();
   cacheSet('discover',out);
   return out;
 }
@@ -1004,13 +1050,16 @@ function tRow(t){
   return el;
 }
 async function loadTerminal(force){
-  RATE_LIMITED=false;
+  RATE_LIMITED=false;if(force){LOG_ERR=null;LOG_RANGE=null;}
   const head=$('termhead'),list=$('tlist');
   list.innerHTML='<div class="cload">Scanning recent chain activity\u2026</div>';
   try{
     if(force)delete _cache['discover'];
     const d=await discoverTokens();
-    head.textContent='scanned '+d.scanned.logs.toLocaleString()+' transfers \u00b7 blocks '+d.scanned.from.toLocaleString()+'\u2013'+d.scanned.to.toLocaleString();
+    head.textContent = (d.source==='logs')
+      ? ('scanned '+d.scanned.logs.toLocaleString()+' transfers \u00b7 blocks '+d.scanned.from.toLocaleString()+'\u2013'+d.scanned.to.toLocaleString())
+      : ('from explorer index'+(LOG_ERR?' \u00b7 chain-wide logs unavailable':''));
+    if(LOG_ERR)head.title=LOG_ERR;
     const raw=(TERM_TAB==='newest'?d.newest:d.trending).slice(0,MAX_TOKENS);
     const toks=await enrich(raw.map(x=>Object.assign({},x)));
     if(!toks.length){list.innerHTML='<div class="cload">No ERC-20 activity found in the last '+SCAN_BLOCKS.toLocaleString()+' blocks.</div>';return;}
