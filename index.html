@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>RobinScan — Robinhood Chain honeypot &amp; rug check</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23000'/%3E%3Cpath d='M9 24V11c0-3.3 2.7-6 6-6 1.9 0 3.4.6 4.6 1.6-2.3 1.2-3.6 3.1-3.6 5.9V24' stroke='%2300c805' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAABdmlDQ1BJQ0MgUHJvZmlsZQAAeJylkLFLw0AYxV9bRdFKBx0cHDIUB2lB6uKodShIKaVWsOqSpEkrJG1IUkQcHVw7dFFxsYr/gW7iPyAIgjq56OygIIKU+K4pxKGd/MLd9+PdvcvdA8JNQzWdoXnArLl2IZOWNkqbEv6UrDrWcj6fxcD6ekRI9IekOGvwvr41XtYcFQiNkhdVy3bJS+TcrmsJbpKn1KpcJp+TEzYvSL4XuuLzm+CKz9+C7WJhBQhHyVLF54RgxWfxFkmt2ibZIMdNo6H27iNeEtVq62vsM93hoIAM0pCgoIEdGHCRZK8xs/6+VNeXQ50elbOFPdh0VFClN0G1wVM1dp26xs/gDlaQfZCpoy+k/D9EV4HhV8/7nANGToDOoef9nHlepw1EnoHbVuCvtxjnO/VmoMVPgdgBcHUTaMoFcM2Mp18s2Za7UoQjrOvAxyUwUQImmfXY1n/X/bx762g/AcV9IHsHHB0Ds9wf2/4F9IxzaxM+sS0AAAAwUExURWHbKVG6JkCZICxwGRxOExM6EBA1Dw8yDw4wDw0tDgwoDQslDQskDQkiDQccDAQWCuvTKPAAAAIGSURBVHjaBcFdSFNRAAfw/7n3EBTt3nNci8qcc01otE3mfIpMSRAfGmGjomiRfRBREfTQW/RBD5EPfTACCdprEFmEi0pljYqeSjahh3JtczPKdOfcO/Zg4j39fmRMybqg4XF4et93tDBOIYVorI5KkLmTOQKiKSHsf1n3+UfRpftdQigKiMi9eLqEoXWhiTYuqRD6k97RaWIWG7Pe4wWuQe1eeVZgjPi9k+mUAJWN9McP3CwzydWOxb6apjYuuHzKYuBo5E+8ElS1BXM+OBoTylG3Ojm1pyYtDlVXIib439UItW2jfg44tj12R2KlneHMlu82AHd9GEDrzUHN3JwvAVg++gJAYKRBfVy/rp+qP1/SEsBhDqpAynRMuRV5avEfkFQCcueRNdk/swn6NwBX+t6xGKA3GYBkNUgZWiUjPPTm9kv1pcJAiTTInmJzqrbvguNmitGKo8gl/8hEqgxlX5MGtX5niWvAeZCXgKflskl1o7tnvhr91A/gbqFymjreudcl19uhxyaTy7vm89QM3bgYldbnVASyPeixyNVS9ldVCLtLchQeergGEj47A3ilFGuDsybXuNmdOVCCFKq+sD9gcw28Fh44KAB4AoWkD5RLw5iOZwR4JtGT8zNKwEvD4wG/+VN6vBqIBk5YLWEWv1qdey3GoMfXK+IsHtq6Idn804Ft+A9M5OB5n6JLwQAAAABJRU5ErkJggg==">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
   :root{
@@ -243,12 +243,26 @@
   .pw-a{display:inline-block;background:var(--green);color:#000;font-weight:800;font-size:13px;
     padding:10px 20px;border-radius:9px;text-decoration:none}
   .pw-a:hover{filter:brightness(1.08)}
+
+  .logo{width:34px;height:34px;border-radius:50%;flex:none;display:block}
+  .tlock{margin-top:10px;padding:22px 16px;background:linear-gradient(180deg,rgba(0,200,5,.05),var(--surface));
+    border:1px solid rgba(0,200,5,.22);border-radius:var(--r);text-align:center}
+  .tlock-h{font-size:14px;font-weight:800;color:var(--fg);margin-bottom:5px}
+  .tlock-b{font-size:12.5px;color:var(--fg-dim);line-height:1.6;margin-bottom:13px}
+  .tlock-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .tlock-a{background:var(--green);color:#000;font-weight:800;font-size:12.5px;padding:9px 17px;
+    border-radius:8px;text-decoration:none;border:none;cursor:pointer;font-family:inherit}
+  .tlock-a:hover{filter:brightness(1.08)}
+  .tlock-b2{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);
+    font-weight:700;font-size:12.5px;padding:9px 17px;border-radius:8px;cursor:pointer;font-family:inherit}
+  .tlock-b2:hover{border-color:var(--green-dim);color:var(--green)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="brand">
+      <img class="logo" src="data:image/webp;base64,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" alt="RobinScan" width="34" height="34">
       <div class="name">Robin<span style="color:var(--green)">Scan</span></div>
       <button id="wbtn" class="wbtn" title="Read-only. No signature, no transaction.">Connect wallet</button>
       <span class="unofficial">Unofficial</span>
@@ -282,6 +296,15 @@
     <span class="tt-caret" id="ttCaret">▾</span>
   </div>
   <div id="termWrap">
+  <div class="tlock" id="termLock" style="display:none">
+    <div class="tlock-h">Live terminal is for $ROBINSCAN holders</div>
+    <div class="tlock-b">Hold <b>1,000+ $ROBINSCAN</b> to unlock the live token terminal — newest deploys, trending momentum, and instant risk labels.<br>Anyone can still scan any token by pasting its address above.</div>
+    <div class="tlock-row">
+      <a class="tlock-a" id="tlockBuy" href="#" target="_blank" rel="noopener">Get $ROBINSCAN ↗</a>
+      <button class="tlock-b2" id="tlockConnect">Connect wallet</button>
+    </div>
+  </div>
+  <div id="termBody">
   <div class="tabs">
     <button class="tab on" data-tab="newest">Newest</button>
     <button class="tab" data-tab="trending">Trending</button>
@@ -289,6 +312,7 @@
   <div class="term">
     <div class="termhead"><span id="termhead">scanning…</span><button id="termRefresh">refresh</button></div>
     <div class="tlist" id="tlist"></div>
+  </div>
   </div>
   </div>
 
@@ -1648,7 +1672,25 @@ function showPaywall(){
   if(pc)pc.onclick=e=>{e.preventDefault();connectWallet();};
 }
 
+/* The terminal is holder-only. Non-holders never trigger its requests at all,
+   which also spares the public explorer a lot of load. */
+let TERM_LOADED=false;
+function applyTerminalGate(){
+  const lock=$('termLock'),body=$('termBody');
+  if(!lock||!body)return;
+  if(IS_HOLDER){
+    lock.style.display='none';
+    body.style.display='';
+    if(!TERM_LOADED){TERM_LOADED=true;loadTerminal(false);}
+  }else{
+    lock.style.display='';
+    body.style.display='none';
+    TERM_LOADED=false;   /* reload fresh if they connect a holder wallet later */
+  }
+}
+
 function renderGate(){
+  applyTerminalGate();
   const btn=$('wbtn'),status=$('gstatus');
   if(!btn||!status)return;
   if(WALLET){
@@ -1830,8 +1872,8 @@ function serTok(t){return{addr:t.addr,name:t.name,sym:t.sym,dec:t.dec,txs:t.txs,
 function reviveTok(t){return Object.assign({},t,{supply:BigInt(t.supply||'0')});}
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');TERM_TAB=b.dataset.tab;loadTerminal(false);}));
-$('termRefresh').addEventListener('click',()=>loadTerminal(true));
+  b.classList.add('on');TERM_TAB=b.dataset.tab;if(IS_HOLDER)loadTerminal(false);}));
+$('termRefresh').addEventListener('click',()=>{if(IS_HOLDER)loadTerminal(true);});
 
 /* wallet + contract-address controls */
 (function(){
@@ -1863,12 +1905,16 @@ $('termRefresh').addEventListener('click',()=>loadTerminal(true));
   tog.addEventListener('click',()=>{
     collapsed=!collapsed;
     try{localStorage.setItem('rhscan.term.collapsed',collapsed?'1':'0');}catch(e){}
-    if(!collapsed){wrap.style.maxHeight='none';}
+    if(!collapsed)wrap.style.maxHeight='none';
     apply();
-    if(!collapsed&&!wrap.dataset.loaded){wrap.dataset.loaded='1';loadTerminal(false);}
+    if(!collapsed)applyTerminalGate();   /* loads only if holder */
   });
-  // only auto-load the terminal if it starts expanded
-  if(!collapsed){wrap.dataset.loaded='1';loadTerminal(false);}
+  /* NOTE: no unconditional loadTerminal() here. applyTerminalGate(), called from
+     renderGate() once the wallet balance is known, decides whether to load. */
+  const buy=$('tlockBuy');
+  if(buy)buy.href='https://dexscreener.com/robinhood/'+TOKEN_CA;
+  const tc=$('tlockConnect');
+  if(tc)tc.addEventListener('click',()=>connectWallet());
 })();
 
 
