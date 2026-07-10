@@ -489,49 +489,54 @@ async function fetchMarket(addr,totalSupply,dec){
    full-scan banner are computed from the SAME signals, so they can
    never disagree again.
    =================================================================== */
-async function bundleCheck(tokenAddr, poolAddr, maxPages){
+/* The launch happens in a token's FIRST transfers. Blockscout's v2 endpoint
+   returns newest-first, so paginating from there can never reach the launch of
+   an active token. The Etherscan-compatible endpoint supports sort=asc, which
+   hands us exactly the launch window in a single request. */
+async function bundleCheck(tokenAddr, poolAddr){
   const pool=(poolAddr||'').toLowerCase();
   const skip=new Set([ZERO,pool,tokenAddr.toLowerCase()]);
-  let url='/api/v2/tokens/'+tokenAddr+'/transfers';
-  const items=[];let complete=false;
-  const pages=maxPages||2;
-  for(let page=0;page<pages;page++){
-    let j=null;
-    try{j=await scout(url,1);}catch(e){break;}
-    if(!j||!j.items||!j.items.length){complete=true;break;}
-    items.push.apply(items,j.items);
-    const np=j.next_page_params;
-    if(!np){complete=true;break;}
-    const qs=Object.keys(np).filter(k=>np[k]!==null&&np[k]!==undefined)
-      .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
-    if(!qs){complete=true;break;}
-    url='/api/v2/tokens/'+tokenAddr+'/transfers?'+qs;
-  }
-  if(!items.length)return{maxRecipients:0,maxFunder:0,complete:false,firstIn:{}};
+  let rows=null;
 
-  /* Group by (tx, sender). A router filling many buyers in one transaction
-     sends FROM the pool \u2014 that is normal trading, not a bundle. A bundled
-     launch is many recipients funded by one NON-pool sender in one tx. */
+  try{
+    const j=await scout('/api?module=account&action=tokentx&contractaddress='+tokenAddr
+      +'&page=1&offset=100&sort=asc',2);
+    if(j&&j.status==='1'&&Array.isArray(j.result)&&j.result.length){
+      rows=j.result.map(t=>({to:(t.to||'').toLowerCase(),from:(t.from||'').toLowerCase(),
+        tx:(t.hash||'').toLowerCase(),block:Number(t.blockNumber)}));
+    }
+  }catch(e){}
+
+  /* fallback: one page of the v2 endpoint (newest-first, so only useful for
+     brand-new tokens whose entire history fits on one page) */
+  if(!rows){
+    try{
+      const j=await scout('/api/v2/tokens/'+tokenAddr+'/transfers',1);
+      if(j&&j.items&&j.items.length&&!j.next_page_params){
+        rows=j.items.map(t=>({to:((t.to&&t.to.hash)||'').toLowerCase(),
+          from:((t.from&&t.from.hash)||'').toLowerCase(),
+          tx:(t.transaction_hash||'').toLowerCase(),block:Number(t.block_number)}));
+      }
+    }catch(e){}
+  }
+  if(!rows||!rows.length)return{maxRecipients:0,maxFunder:0,complete:false,firstIn:{}};
+
+  /* Group by (tx, sender). Transfers sourced FROM the pool are ordinary buys \u2014
+     a router filling many buyers in one tx is not a bundle. */
   const byTxFrom={},firstIn={};
-  for(const t of items){
-    const to=((t.to&&t.to.hash)||'').toLowerCase();
-    const from=((t.from&&t.from.hash)||'').toLowerCase();
-    const tx=(t.transaction_hash||t.tx_hash||'').toLowerCase();
-    const blk=Number(t.block_number);
-    if(!to||skip.has(to))continue;
-    if(from===pool)continue;                      /* buys from the pool: ignore */
-    if(tx&&from){const k=tx+'|'+from;(byTxFrom[k]=byTxFrom[k]||new Set()).add(to);}
-    if(!(to in firstIn)||blk<firstIn[to].block)firstIn[to]={block:blk,tx,funder:from};
+  for(const t of rows){
+    if(!t.to||skip.has(t.to))continue;
+    if(t.from===pool)continue;
+    if(t.tx&&t.from){const k=t.tx+'|'+t.from;(byTxFrom[k]=byTxFrom[k]||new Set()).add(t.to);}
+    if(!(t.to in firstIn)||t.block<firstIn[t.to].block)firstIn[t.to]={block:t.block,tx:t.tx,funder:t.from};
   }
   let maxRecipients=0,bundleTx=null;
-  for(const k in byTxFrom){
-    if(byTxFrom[k].size>maxRecipients){maxRecipients=byTxFrom[k].size;bundleTx=k.split('|')[0];}
-  }
+  for(const k in byTxFrom){if(byTxFrom[k].size>maxRecipients){maxRecipients=byTxFrom[k].size;bundleTx=k.split('|')[0];}}
   const byFunder={};
   for(const a in firstIn){const f=firstIn[a].funder;if(f&&!skip.has(f))(byFunder[f]=byFunder[f]||[]).push(a);}
   let maxFunder=0,funderAddr=null;
   for(const f in byFunder){if(byFunder[f].length>maxFunder){maxFunder=byFunder[f].length;funderAddr=f;}}
-  return{maxRecipients,bundleTx,maxFunder,funderAddr,firstIn,complete};
+  return{maxRecipients,bundleTx,maxFunder,funderAddr,firstIn,complete:true};
 }
 
 /* The single source of truth for "how bad is this token". */
@@ -704,7 +709,7 @@ async function modHolders(addr,dec){
 
   /* connections + bundle: one shared call, same data the verdict uses */
   let edges=[],bundle=null;
-  try{ bundle=await bundleCheck(addr,pool,6); }catch(e){ bundle={maxRecipients:0,maxFunder:0,complete:false}; }
+  try{ bundle=await bundleCheck(addr,pool); }catch(e){ bundle={maxRecipients:0,maxFunder:0,complete:false}; }
   if(bundle&&bundle.firstIn){
     const byTx={},byFunder={};
     const topSet=new Set(wallets.slice(0,14).map(r=>r.addr));
@@ -998,7 +1003,7 @@ async function marketBatch(addrs){
 
 /* The DEX factory address, discovered once by asking a known pool who made it. */
 async function findFactory(){
-  try{const c=localStorage.getItem('rhscan.factory');if(c)return c;}catch(e){}
+  try{const c=localStorage.getItem('rhscan.factory');if(c&&/^0x[0-9a-f]{40}$/.test(c)&&c!==ZERO)return c;}catch(e){}
   const pairs=await dexSearch('WETH');
   for(const p of pairs.slice(0,4)){
     if(!p.pairAddress)continue;
@@ -1027,21 +1032,43 @@ async function blockTimes(blocks){
 async function newestPools(){
   const factory=await findFactory();
   if(!factory)return null;
-  const items=await scoutLogs(factory,2);
-  if(!items.length)return null;
+
+  let logs=null;
+  let latest=null;
+  try{latest=parseInt(await rpc('eth_blockNumber',[]),16);}catch(e){}
+
+  /* filtered log query: one address, one topic \u2014 far lighter than pulling
+     every log the factory ever emitted */
+  if(latest){
+    for(const span of [60000,20000,5000]){
+      const from=Math.max(0,latest-span);
+      try{
+        const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
+          +'&address='+factory+'&topic0='+TOPIC_POOL_CREATED,1);
+        if(j&&j.status==='1'&&Array.isArray(j.result)&&j.result.length){
+          logs=j.result.map(l=>({topics:l.topics,block_number:parseInt(l.blockNumber,16)}));
+          break;
+        }
+      }catch(e){}
+    }
+  }
+  /* fallback: the v2 address-logs endpoint, newest first */
+  if(!logs){
+    try{const items=await scoutLogs(factory,1);if(items.length)logs=items;}catch(e){}
+  }
+  if(!logs||!logs.length)return null;
 
   const created=[];
-  for(const l of items){
+  for(const l of logs){
     const t=(l.topics||[]);
     const t0=(t[0]||'').toLowerCase();
     if(t0!==TOPIC_POOL_CREATED&&t0!==TOPIC_PAIR_CREATED)continue;
     if(!t[1]||!t[2])continue;
     created.push({token0:addrWord(t[1]),token1:addrWord(t[2]),
-      block:Number(l.block_number!=null?l.block_number:l.blockNumber)});
+      block:Number(l.block_number!=null?l.block_number:parseInt(l.blockNumber,16))});
   }
   if(!created.length)return null;
 
-  /* whichever token appears in nearly every pool is the quote asset (WETH) */
   const freq={};
   created.forEach(c=>{freq[c.token0]=(freq[c.token0]||0)+1;freq[c.token1]=(freq[c.token1]||0)+1;});
   const quote=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
@@ -1051,20 +1078,24 @@ async function newestPools(){
   for(const c of created){
     const tok=c.token0===quote?c.token1:(c.token1===quote?c.token0:null);
     if(!tok||seen.has(tok))continue;
-    seen.add(tok);
-    rows.push({addr:tok,block:c.block});
+    seen.add(tok);rows.push({addr:tok,block:c.block});
     if(rows.length>=MAX_TOKENS)break;
   }
   if(!rows.length)return null;
 
-  /* real timestamps + metadata + market in a few batched calls */
   const times=await blockTimes(rows.map(r=>r.block));
-  const meta=await rpcBatch(rows.flatMap(r=>[
-    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.name},'latest']},
-    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.symbol},'latest']},
-    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.decimals},'latest']}
-  ]));
   const mkts=await marketBatch(rows.map(r=>r.addr));
+  /* metadata in small batches so we don't blow the CU budget in one shot */
+  const meta=[];
+  for(let i=0;i<rows.length;i+=3){
+    const chunk=rows.slice(i,i+3);
+    const res=await rpcBatch(chunk.flatMap(r=>[
+      {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.name},'latest']},
+      {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.symbol},'latest']},
+      {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.decimals},'latest']}
+    ]));
+    meta.push.apply(meta,res);
+  }
   return rows.map((r,i)=>{
     const m=mkts[r.addr]||null;
     return{addr:r.addr,
@@ -1072,8 +1103,8 @@ async function newestPools(){
       sym:meta[i*3+1]?decodeString(meta[i*3+1]):'',
       dec:meta[i*3+2]?(Number(toBig(meta[i*3+2]))||18):18,
       createdAt:(m&&m.pairCreatedAt)||times[r.block]||null,
-      block:r.block,mkt:m,
-      mcap:m&&m.mcap,vol:m&&m.vol,liq:m&&m.liq,price:m&&m.price,pair:m&&m.pairAddress};
+      block:r.block,mkt:m,mcap:m&&m.mcap,vol:m&&m.vol,liq:m&&m.liq,
+      price:m&&m.price,pair:m&&m.pairAddress};
   });
 }
 
@@ -1194,7 +1225,7 @@ async function quickLabel(t){
 
   /* THE MISSING CHECK: same-transaction bundle, identical to the full scan */
   let bundle=null;
-  try{bundle=await bundleCheck(t.addr,pool,2);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
+  try{bundle=await bundleCheck(t.addr,pool);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
   t.bundle=bundle;
 
   Object.assign(t,verdictFrom({flags,conc,sim,bundle}));
@@ -1371,16 +1402,21 @@ async function run(){
 
     log('\u203a holders, connections & liquidity\u2026');
     const mH=await modHolders(addr,dec);log('  '+(mH.pool?'pool found':'no pool')+', '+(mH.edges||[]).length+' links',mH.status==='unknown'?'er':'ok');
-    log('\u203a live honeypot test\u2026');
-    const mS=await modHoneypot(addr,mH.pool,mH.sampleHolder);log('  '+mS.status,mS.status==='fail'?'er':'ok');
-    log('\u203a liquidity lock\u2026');
-    const mL=await modLiquidity(addr,mH.pool,dec);log('  '+mL.status,mL.status==='fail'?'er':'ok');
+    /* honeypot sim and LP lock both only need mH.pool — run them together */
+    log('\u203a live honeypot test + liquidity lock\u2026');
+    const [mS,mL]=await Promise.all([
+      modHoneypot(addr,mH.pool,mH.sampleHolder),
+      modLiquidity(addr,mH.pool,dec)
+    ]);
+    log('  honeypot: '+mS.status,mS.status==='fail'?'er':'ok');
+    log('  liquidity: '+mL.status,mL.status==='fail'?'er':'ok');
 
     /* One verdict, computed from the same signals the terminal chip uses,
        so the list and this report can never disagree. */
     let shared=null,sharedFlags=null,sharedSim=null,sharedLp=null,scanCreatedAt=null;
+    let codeHex=null;try{codeHex=await getCode(addr);}catch(e){}
     try{
-      const rt=strip(await getCode(addr)),has=s=>rt.includes(s);
+      const rt=strip(codeHex||await getCode(addr)),has=s=>rt.includes(s);
       const flags={hasCode:rt.length>0,mint:has(SEL.mint),
         blacklist:has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist),
         pausable:has(SEL.pause),feeSetter:has(SEL.setFees)||has(SEL.setTaxes)||has(SEL.setFee),
