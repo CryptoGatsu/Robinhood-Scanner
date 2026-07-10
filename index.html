@@ -215,6 +215,10 @@
   .ai-copy:hover{color:var(--green);border-color:var(--green-dim)}
   .chartcard{margin-top:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px}
   .cc-h{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint);margin-bottom:8px}
+
+  .agechip{display:inline-block;margin-left:7px;padding:1px 6px;border-radius:5px;font-size:10.5px;
+    font-weight:700;color:var(--green);background:rgba(0,200,5,.1);border:1px solid rgba(0,200,5,.22);
+    vertical-align:middle;font-family:var(--mono)}
 </style>
 </head>
 <body>
@@ -473,7 +477,7 @@ async function fetchMarket(addr,totalSupply,dec){
       const supply=Number(totalSupply)/Math.pow(10,dec||18);
       if(isFinite(supply)&&supply>0)mcap=price*supply;
     }
-    return{price,mcap,pairAddress:(use.pairAddress||null),
+    return{price,mcap,pairAddress:(use.pairAddress||null),pairCreatedAt:(use.pairCreatedAt||null),
       vol:(use.volume&&use.volume.h24)||null,
       liq:(use.liquidity&&use.liquidity.usd)||null,
       dex:use.dexId||null};
@@ -803,7 +807,7 @@ function wireBubbles(){
 }
 
 /* ===== token card ===== */
-async function renderTokenCard(addr,name,sym){
+async function renderTokenCard(addr,name,sym,createdAt){
   $('tokname').textContent=name||'Unknown token';
   $('toksym').textContent=sym?'$'+sym:'';
   const ta=$('tokaddr');
@@ -940,82 +944,72 @@ async function fetchTokenPage(query){
     ts:t.exchange_rate_updated_at||t.created_at||null
   })).filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr));
 }
-/* True deployment order via Blockscout's getcontractcreation (batchable).
-   Returns [{addr, block, ts}] newest-first, or null if unavailable. */
-async function creationTimes(addrs){
-  const out={};
-  /* endpoint accepts up to ~5 addresses per call reliably */
-  for(let i=0;i<addrs.length;i+=5){
-    const batch=addrs.slice(i,i+5);
-    try{
-      const j=await scout('/api?module=contract&action=getcontractcreation&contractaddresses='+batch.join(','),1);
-      if(j&&j.status==='1'&&Array.isArray(j.result)){
-        for(const r of j.result){
-          const a=(r.contractAddress||'').toLowerCase();
-          if(!/^0x[0-9a-f]{40}$/.test(a))continue;
-          out[a]={block:r.blockNumber?parseInt(r.blockNumber,10):null,
-                  ts:r.timestamp?Date.parse(r.timestamp)||parseInt(r.timestamp,10):null};
-        }
-      }
-    }catch(e){}
-  }
-  return out;
+
+
+/* age formatter for deploy badges */
+function ageBadge(ms){
+  if(!ms)return null;
+  const s=Math.max(0,Math.floor((Date.now()-ms)/1000));
+  if(s<60)return s+'s';
+  if(s<3600)return Math.floor(s/60)+'m';
+  if(s<86400)return Math.floor(s/3600)+'h';
+  return Math.floor(s/86400)+'d';
 }
 
-/* One DexScreener call for up to 30 tokens -> real 24h volume for ranking. */
-async function marketBatch(addrs){
-  const out={};
-  if(!addrs.length)return out;
+/* DexScreener has no "newest pairs by chain" API endpoint, but its search
+   endpoint returns pairs with pairCreatedAt. On Robinhood Chain every token
+   pairs against WETH, so a few WETH-oriented searches surface the fresh pairs.
+   We dedupe by token and sort by real creation time. */
+const RH_CHAINS=new Set(['robinhood','robinhoodchain','robinhood-chain','4663']);
+async function dexSearch(q){
   try{
-    const r=await fetch(DEXSCREEN+addrs.slice(0,30).join(','));
-    if(!r.ok)return out;
+    const r=await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(q));
+    if(!r.ok)return [];
     const j=await r.json();
-    for(const p of (j.pairs||[])){
-      const cid=String(p.chainId||'').toLowerCase();
-      if(!(cid==='robinhood'||cid==='robinhoodchain'||cid==='robinhood-chain'||cid==='4663'))continue;
-      const base=((p.baseToken&&p.baseToken.address)||'').toLowerCase();
-      if(!base)continue;
-      const liq=(p.liquidity&&p.liquidity.usd)||0;
-      if(!out[base]||liq>out[base].liq)
-        out[base]={price:parseFloat(p.priceUsd)||null,mcap:p.marketCap||p.fdv||null,
-          vol:(p.volume&&p.volume.h24)||0,liq};
-    }
-  }catch(e){}
-  return out;
+    return (j.pairs||[]).filter(p=>RH_CHAINS.has(String(p.chainId||'').toLowerCase()));
+  }catch(e){return [];}
 }
-
+function pairRow(p){
+  return {addr:((p.baseToken&&p.baseToken.address)||'').toLowerCase(),
+    sym:(p.baseToken&&p.baseToken.symbol)||'',name:(p.baseToken&&p.baseToken.name)||'',
+    pair:p.pairAddress||null, createdAt:p.pairCreatedAt||null,
+    vol:(p.volume&&p.volume.h24)||0, mcap:p.marketCap||p.fdv||null,
+    liq:(p.liquidity&&p.liquidity.usd)||null, price:parseFloat(p.priceUsd)||null,
+    ver:(p.labels&&p.labels[0])||null};
+}
 async function discoverTokens(){
   const hit=cacheGet('discover');if(hit)return hit;
 
-  /* candidate pool from the explorer's token index */
-  let rows=[];
-  try{rows=await fetchTokenPage('');}catch(e){}
-  const candidates=rows.slice(0,30).map(r=>r.addr);
+  /* widen coverage: WETH-quoted pairs + a couple of chain-typical terms */
+  const batches=await Promise.all([dexSearch('WETH'),dexSearch('robinhood'),dexSearch('hood')]);
+  const seen=new Map();
+  for(const list of batches) for(const p of list){
+    const row=pairRow(p);
+    if(!/^0x[0-9a-f]{40}$/.test(row.addr))continue;
+    const prev=seen.get(row.addr);
+    /* keep the deepest-liquidity pair per token */
+    if(!prev||((row.liq||0)>(prev.liq||0)))seen.set(row.addr,row);
+  }
+  let rows=[...seen.values()];
 
-  /* TRENDING: rank the candidate pool by real 24h volume */
-  const mkts=await marketBatch(candidates);
-  const withVol=rows.map(r=>Object.assign({},r,{vol:(mkts[r.addr]&&mkts[r.addr].vol)||0,
-    mkt:mkts[r.addr]||null}));
-  let trending=withVol.filter(r=>r.vol>0).sort((a,b)=>b.vol-a.vol);
-  let trendingBy='24h volume';
-  if(!trending.length){trending=withVol.slice().sort((a,b)=>b.holders-a.holders);trendingBy='holders';}
-
-  /* NEWEST: real deployment order via contract creation time */
-  let newest=[],newestBy='';
-  const created=await creationTimes(candidates);
-  const dated=withVol.filter(r=>created[r.addr]&&(created[r.addr].block!=null||created[r.addr].ts!=null))
-    .map(r=>Object.assign({},r,{_c:created[r.addr]}));
-  if(dated.length>=3){
-    const haveBlocks=dated.every(r=>r._c.block!=null);
-    dated.sort((a,b)=>haveBlocks?(b._c.block-a._c.block):((b._c.ts||0)-(a._c.ts||0)));
-    newest=dated;newestBy=haveBlocks?'newest deployments':'newest by creation time';
-  }else{
-    /* last resort: explorer order (which at least isn't holder-sorted) */
-    newest=rows.slice();newestBy='explorer order';
+  /* explorer top-up so the list isn't tiny if search returns little */
+  if(rows.length<MAX_TOKENS){
+    try{
+      const ex=await fetchTokenPage('');
+      const have=new Set(rows.map(r=>r.addr));
+      for(const e of ex){if(!have.has(e.addr)){rows.push({addr:e.addr,sym:e.sym,name:e.name,
+        createdAt:null,vol:0,mcap:null,liq:null,ver:null});have.add(e.addr);}}
+    }catch(e){}
   }
 
-  const out={newest:newest.slice(0,MAX_TOKENS),trending:trending.slice(0,MAX_TOKENS),
-    source:'explorer',newestBy,trendingBy,scanned:null};
+  const dated=rows.filter(r=>r.createdAt);
+  const newest=(dated.length?dated:rows).slice()
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,MAX_TOKENS);
+  const trending=rows.slice().sort((a,b)=>(b.vol||0)-(a.vol||0)).slice(0,MAX_TOKENS);
+
+  const out={newest,trending,source:'dexscreener',
+    newestBy:dated.length?'newest pairs (DexScreener)':'explorer order',
+    trendingBy:'24h volume',scanned:null};
   cacheSet('discover',out);
   return out;
 }
@@ -1130,20 +1124,21 @@ async function scoutLogs(address,maxPages){
   return out;
 }
 async function priceSeries(token){
-  /* prefer the real DexScreener pair over "biggest contract holder" */
   const pool=(token.pairAddress)||token.pool;
   if(!pool)return{kind:'none',reason:'no pool found'};
   let t0=null,t1=null;
   try{t0=addrWord(await call(pool,READ.token0));}catch(e){}
   try{t1=addrWord(await call(pool,READ.token1));}catch(e){}
-  if(!t0||!t1)return{kind:'none',reason:'not a v2-style pool'};
+  if(!t0||!t1)return{kind:'none',reason:'not a standard pool'};
   const tokenIs0=t0===token.addr.toLowerCase();
   if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in this pool'};
-  let quoteDec=18;
+  let tokenDec=token.dec,quoteDec=18;
   try{quoteDec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
 
-  const items=await scoutLogs(pool,3);
+  const items=await scoutLogs(pool,4);
   let pts=[];
+
+  /* v2 path: Sync(reserve0,reserve1) */
   for(const l of items){
     const t=(l.topics||[])[0];
     if(!t||t.toLowerCase()!==TOPIC_SYNC)continue;
@@ -1152,17 +1147,37 @@ async function priceSeries(token){
     const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
     if(base===0n)continue;
     const S=10n**12n;
-    const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(quoteDec)));
+    const scaled=quote*S*(10n**BigInt(tokenDec))/(base*(10n**BigInt(quoteDec)));
     const p=Number(scaled)/1e12;
     const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
     if(isFinite(p)&&p>0&&isFinite(blk))pts.push({x:blk,y:p});
   }
-  pts.sort((a,b)=>a.x-b.x);
-  if(pts.length<2)return{kind:'none',reason:'no reserve updates found'};
 
-  /* Anchor the reserve-ratio series to the real USD price so the axis is $,
-     not raw quote-token units. Shape and % change are unchanged. */
-  const usd=(token.mkt&&token.mkt.price)||(token.priceUsd)||null;
+  /* v3/v4 path: Swap(...,sqrtPriceX96,...) — Robinhood Chain pairs are v3 */
+  if(pts.length<2){
+    pts=[];
+    const Q96=Math.pow(2,96);
+    for(const l of items){
+      const t=(l.topics||[])[0];
+      if(!t||t.toLowerCase()!==TOPIC_V3SWAP)continue;
+      const d=strip(l.data);
+      if(d.length<320)continue;                 /* 5 words: amt0,amt1,sqrtP,liq,tick */
+      const sqrtX96=BigInt('0x'+d.slice(128,192));
+      if(sqrtX96===0n)continue;
+      /* price token0-in-token1 = (sqrt/2^96)^2, decimal-adjusted */
+      const r=Number(sqrtX96)/Q96;
+      let p0=r*r*Math.pow(10,tokenDec-quoteDec);
+      const price=tokenIs0?p0:(p0>0?1/p0:0);
+      const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
+      if(isFinite(price)&&price>0&&isFinite(blk))pts.push({x:blk,y:price});
+    }
+  }
+
+  pts.sort((a,b)=>a.x-b.x);
+  if(pts.length<2)return{kind:'none',reason:'no swaps indexed for this pool yet'};
+
+  /* anchor to live USD price; shape/% preserved */
+  const usd=(token.mkt&&token.mkt.price)||token.priceUsd||null;
   if(usd&&isFinite(usd)&&usd>0){
     const last=pts[pts.length-1].y;
     if(last>0){const k=usd/last;if(isFinite(k)&&k>0)pts=pts.map(p=>({x:p.x,y:p.y*k}));}
@@ -1261,7 +1276,7 @@ async function run(){
 
     /* One verdict, computed from the same signals the terminal chip uses,
        so the list and this report can never disagree. */
-    let shared=null,sharedFlags=null,sharedSim=null,sharedLp=null;
+    let shared=null,sharedFlags=null,sharedSim=null,sharedLp=null,scanCreatedAt=null;
     try{
       const rt=strip(await getCode(addr)),has=s=>rt.includes(s);
       const flags={hasCode:rt.length>0,mint:has(SEL.mint),
@@ -1277,10 +1292,11 @@ async function run(){
       const lpF=mL.findings.find(f=>/burned or locked/i.test(f.q||''));
       const lp=lpNA?{kind:'v3v4'}:{kind:'v2',securedPct:lpF?parseFloat(lpF.a):null};
       sharedFlags=flags;sharedSim=sim;sharedLp=lp;
+      scanCreatedAt=(mkt&&mkt.pairCreatedAt)||null;
       shared=verdictFrom({flags,conc:mH.conc,sim,lp,bundle:mH.bundle});
     }catch(e){shared=null;}
 
-    await renderTokenCard(addr,name,sym);
+    await renderTokenCard(addr,name,sym,(mkt&&mkt.pairCreatedAt)||scanCreatedAt);
 
     /* overview from the exact signals the verdict used */
     const ov={sym,name,label:(shared&&shared.label)||'unknown',why:(shared&&shared.why)||'',
@@ -1379,8 +1395,9 @@ const CHIP_TEXT=LABEL_TEXT;
 function tRow(t){
   const el=document.createElement('div');el.className='trow';
   const mc=t.mkt&&money(t.mkt.mcap),vol=t.mkt&&money(t.mkt.vol),liq=t.mkt&&money(t.mkt.liq);
+  const ag=ageBadge(t.createdAt);
   el.innerHTML='<div class="trow-h">'
-    +'<span class="tsym">'+esc(t.sym?'$'+t.sym:short(t.addr))+'</span>'
+    +'<span class="tsym">'+esc(t.sym?'$'+t.sym:short(t.addr))+'</span>'+(ag?'<span class=\"agechip\">'+ag+'</span>':'')
     +'<span class="tname">'+esc(t.name||'')+'</span>'
     +'<span class="chip '+(t.label||'pend')+'">'+CHIP_TEXT[t.label||'pend']+'</span></div>'
     +'<div class="tstats"><span>MC <b>'+(mc||'\u2014')+'</b></span>'+'<span>Vol <b>'+(vol||'\u2014')+'</b></span>'+'<span>Liq <b>'+(liq||'\u2014')+'</b></span></div>'
@@ -1443,7 +1460,7 @@ async function loadTerminal(force){
       while(i<toks.length){
         const k=i++,t=toks[k];
         try{await quickLabel(t);}catch(e){t.label='unknown';t.why='Check failed';}
-        try{t.mkt=await marketFor(t);}catch(e){t.mkt=null;}
+        if(t.mcap!=null||t.liq!=null||t.vol!=null){t.mkt={mcap:t.mcap,vol:t.vol,liq:t.liq,price:t.price,pairAddress:t.pair};}else{try{t.mkt=await marketFor(t);}catch(e){t.mkt=null;}}
         const fresh=tRow(t);els[k].replaceWith(fresh);els[k]=fresh;
       }
     }
