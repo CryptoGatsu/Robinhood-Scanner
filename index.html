@@ -169,7 +169,7 @@
   .chip.ok{background:rgba(0,200,5,.13);color:var(--green);border:1px solid rgba(0,200,5,.3)}
   .chip.caution{background:rgba(255,184,0,.13);color:var(--amber);border:1px solid rgba(255,184,0,.3)}
   .chip.bundled{background:rgba(255,184,0,.13);color:var(--amber);border:1px solid rgba(255,184,0,.3)}
-  .chip.unsafe{background:rgba(255,80,0,.13);color:var(--red);border:1px solid rgba(255,80,0,.3)}
+  .chip.unsafe,.chip.avoid{background:rgba(255,80,0,.13);color:var(--red);border:1px solid rgba(255,80,0,.3)}
   .chip.unknown{background:#1a1c1a;color:var(--grey);border:1px solid var(--line)}
   .chip.pend{background:#1a1c1a;color:var(--fg-faint);border:1px solid var(--line)}
   .tstats{display:flex;gap:12px;padding:0 12px 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--fg-faint)}
@@ -412,9 +412,9 @@ function F(sev,q,a,why,ev){return{sev,q,a,why,ev};}
 let RECENT=[];
 function loadRecent(){try{const s=window.localStorage&&localStorage.getItem('rhscan.recent');if(s)RECENT=JSON.parse(s)||[];}catch(e){RECENT=[];}}
 function saveRecent(){try{window.localStorage&&localStorage.setItem('rhscan.recent',JSON.stringify(RECENT.slice(0,8)));}catch(e){}}
-function pushRecent(addr,name,sym,status){
+function pushRecent(addr,name,sym,status,label){
   RECENT=RECENT.filter(r=>r.addr!==addr);
-  RECENT.unshift({addr,name:name||'',sym:sym||'',status,t:Date.now()});
+  RECENT.unshift({addr,name:name||'',sym:sym||'',status,label:label||null,t:Date.now()});
   RECENT=RECENT.slice(0,8);saveRecent();renderRecent();
 }
 function renderRecent(){
@@ -423,7 +423,7 @@ function renderRecent(){
   box.style.display='block';list.innerHTML='';
   RECENT.forEach(r=>{
     const b=document.createElement('button');b.className='ritem';
-    b.innerHTML='<span class="dotb d-'+r.status+'"></span><span class="rname">'+esc(r.sym?'$'+r.sym:(r.name||short(r.addr)))+'</span><span class="rv mv-'+r.status+'">'+VWORD[r.status]+'</span>';
+    b.innerHTML='<span class="dotb d-'+r.status+'"></span><span class="rname">'+esc(r.sym?'$'+r.sym:(r.name||short(r.addr)))+'</span><span class="rv mv-'+r.status+'">'+(r.label?LABEL_TEXT[r.label]:VWORD[r.status])+'</span>';
     b.addEventListener('click',()=>{$('addr').value=r.addr;run();});
     list.appendChild(b);
   });
@@ -455,6 +455,80 @@ async function fetchMarket(addr,totalSupply,dec){
   }catch(e){return null;}
 }
 
+/* ===================================================================
+   ONE bundle check + ONE verdict function. The terminal chip and the
+   full-scan banner are computed from the SAME signals, so they can
+   never disagree again.
+   =================================================================== */
+async function bundleCheck(tokenAddr, poolAddr){
+  const skip=new Set([ZERO,(poolAddr||'').toLowerCase(),tokenAddr.toLowerCase()]);
+  let url='/api/v2/tokens/'+tokenAddr+'/transfers?type=ERC-20';
+  const items=[];let complete=false;
+  for(let page=0;page<6;page++){
+    let j=null;
+    try{j=await scout(url,1);}catch(e){break;}
+    if(!j||!j.items||!j.items.length){complete=true;break;}
+    items.push.apply(items,j.items);
+    const np=j.next_page_params;
+    if(!np){complete=true;break;}
+    const qs=Object.keys(np).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
+    url='/api/v2/tokens/'+tokenAddr+'/transfers?type=ERC-20&'+qs;
+  }
+  if(!items.length)return{maxRecipients:0,maxFunder:0,complete:false,firstIn:{}};
+
+  const byTx={},firstIn={};
+  for(const t of items){
+    const to=((t.to&&t.to.hash)||'').toLowerCase();
+    const from=((t.from&&t.from.hash)||'').toLowerCase();
+    const tx=(t.transaction_hash||t.tx_hash||'').toLowerCase();
+    const blk=Number(t.block_number);
+    if(!to||skip.has(to))continue;
+    if(tx){(byTx[tx]=byTx[tx]||new Set()).add(to);}
+    if(!(to in firstIn)||blk<firstIn[to].block)firstIn[to]={block:blk,tx,funder:from};
+  }
+  let maxRecipients=0,bundleTx=null;
+  for(const tx in byTx){if(byTx[tx].size>maxRecipients){maxRecipients=byTx[tx].size;bundleTx=tx;}}
+  const byFunder={};
+  for(const a in firstIn){const f=firstIn[a].funder;if(f&&!skip.has(f))(byFunder[f]=byFunder[f]||[]).push(a);}
+  let maxFunder=0,funderAddr=null;
+  for(const f in byFunder){if(byFunder[f].length>maxFunder){maxFunder=byFunder[f].length;funderAddr=f;}}
+  return{maxRecipients,bundleTx,maxFunder,funderAddr,firstIn,complete};
+}
+
+/* The single source of truth for "how bad is this token". */
+function verdictFrom({flags,conc,sim,lp,bundle}){
+  if(!flags||!flags.hasCode)return{label:'avoid',why:'No contract code at this address'};
+  if(flags.mint)      return{label:'avoid',why:'Mint function present \u2014 supply can be inflated'};
+  if(flags.blacklist) return{label:'avoid',why:'Blacklist function present \u2014 wallets can be frozen'};
+  if(flags.proxy)     return{label:'avoid',why:'Upgradeable proxy \u2014 the code can be rewritten'};
+  if(sim&&sim.transferFrozen)return{label:'avoid',why:'Live test: transfers are frozen'};
+  if(sim&&sim.sellBlocked)   return{label:'avoid',why:'Live test: selling into the pool is blocked \u2014 honeypot'};
+  if(!conc)return{label:'unknown',why:'No holder data yet \u2014 treat as high risk'};
+  if(conc.top1>=30||conc.top10>=85)
+    return{label:'avoid',why:'Extreme concentration \u2014 top wallet holds '+conc.top1.toFixed(1)+'%'};
+  if(lp&&lp.kind==='v2'&&lp.securedPct!=null&&lp.securedPct<50)
+    return{label:'avoid',why:'Only '+lp.securedPct.toFixed(0)+'% of LP burned/locked \u2014 team can pull liquidity'};
+  if(bundle&&bundle.maxRecipients>=3)
+    return{label:'bundled',why:bundle.maxRecipients+' wallets received tokens in one transaction \u2014 bundled launch'};
+  if(bundle&&bundle.maxFunder>=3)
+    return{label:'bundled',why:bundle.maxFunder+' top wallets share a single funder'};
+  if(conc.equalCluster>=3)
+    return{label:'bundled',why:conc.equalCluster+' wallets hold identical amounts \u2014 likely one owner'};
+  if(conc.top10>=70)
+    return{label:'bundled',why:'Top 10 wallets hold '+conc.top10.toFixed(0)+'%'};
+  if(!sim||!sim.ran)return{label:'caution',why:'Could not simulate a sell \u2014 unverified'};
+  if(bundle&&!bundle.complete)return{label:'caution',why:'Could not fully verify bundling \u2014 explorer data incomplete'};
+  const soft=[];
+  if(flags.pausable) soft.push('trading can be paused');
+  if(flags.feeSetter)soft.push('tax can change after you buy');
+  if(flags.limits)   soft.push('max-sell can be shrunk');
+  if(soft.length)return{label:'caution',why:'Owner switches present: '+soft.join(', ')};
+  return{label:'ok',why:'Live sell test passed, no bundle, no dangerous switches \u2014 still not a guarantee'};
+}
+/* one vocabulary everywhere */
+const LABEL_TEXT={avoid:'Avoid',bundled:'Bundled',caution:'Caution',ok:'Looks OK',unknown:'No data',pend:'checking'};
+const LABEL_SEV ={avoid:'fail',  bundled:'fail',  caution:'warn',  ok:'pass',      unknown:'unknown',pend:'unknown'};
+
 /* ===== 1. HONEYPOT ===== */
 async function modHoneypot(addr,pool,sampleHolder){
   const f=[];let unknown=false;
@@ -485,38 +559,6 @@ async function modHoneypot(addr,pool,sampleHolder){
 }
 
 /* ===== connection graph ===== */
-function buildEdges(firsts,pool){
-  const edges=[],byTx={},byFunder={};
-  firsts.forEach(f=>{
-    if(f.tx)(byTx[f.tx]=byTx[f.tx]||[]).push(f.addr);
-    if(f.funder&&f.funder!==ZERO&&f.funder!==pool)(byFunder[f.funder]=byFunder[f.funder]||[]).push(f.addr);
-  });
-  const seen=new Set();
-  Object.values(byTx).forEach(as=>{if(as.length>=2)for(let i=0;i<as.length;i++)for(let j=i+1;j<as.length;j++){
-    const k=[as[i],as[j]].sort().join('|');if(!seen.has(k)){edges.push({a:as[i],b:as[j],type:'bundle'});seen.add(k);}}});
-  Object.values(byFunder).forEach(as=>{if(as.length>=2)for(let i=0;i<as.length;i++)for(let j=i+1;j<as.length;j++){
-    const k=[as[i],as[j]].sort().join('|');if(!seen.has(k)){edges.push({a:as[i],b:as[j],type:'funder'});seen.add(k);}}});
-  const biggestBundle=Math.max(0,...Object.values(byTx).map(a=>a.length));
-  const biggestFunder=Math.max(0,...Object.values(byFunder).map(a=>a.length));
-  const funderAddr=(Object.entries(byFunder).sort((a,b)=>b[1].length-a[1].length)[0]||[null])[0];
-  return{edges,biggestBundle,biggestFunder,funderAddr};
-}
-async function fetchFirstInbound(addr,holders){
-  /* best-effort: this Blockscout endpoint 500s for some tokens. One quiet try
-     each, no retries, failures just mean "no connection data" rather than noise. */
-  const out=await Promise.all(holders.map(async h=>{
-    try{
-      const t=await scout('/api/v2/addresses/'+h+'/token-transfers?token='+addr+'&type=ERC-20',1);
-      const ins=(t.items||[]).filter(x=>((x.to&&x.to.hash||'')).toLowerCase()===h);
-      if(!ins.length)return null;
-      ins.sort((a,b)=>(a.block_number||0)-(b.block_number||0));
-      const f=ins[0];
-      return{addr:h,funder:((f.from&&f.from.hash)||'').toLowerCase()||null,
-        tx:(f.transaction_hash||f.tx_hash||'').toLowerCase()||null,block:f.block_number};
-    }catch(e){return null;}
-  }));
-  return out.filter(Boolean);
-}
 
 /* ===== 2. HOLDERS ===== */
 async function modHolders(addr,dec){
@@ -547,25 +589,37 @@ async function modHolders(addr,dec){
     f.push(F(t10>=70?'fail':t10>=45?'warn':'pass','Top 10 wallets hold',fmtPct(t10),t10>=70?'A handful of wallets control almost everything.':t10>=45?'The top 10 hold a large share \u2014 stay cautious.':'Ownership is spread across many wallets.',count.toLocaleString()+' holders total'));
   }
 
-  // connections
-  let edges=[],graph=null;
-  const topW=wallets.slice(0,14).map(r=>r.addr);
-  if(topW.length>=2){
-    const firsts=await fetchFirstInbound(addr,topW);
-    graph=buildEdges(firsts,pool);
-    edges=graph.edges;
-    if(graph.biggestBundle>=3)
-      f.push(F('fail','Were coins handed out in one bundle?','Yes \u2014 '+graph.biggestBundle+' wallets','Several top wallets received their tokens in the exact same transaction. That\u2019s a bundled launch \u2014 insiders set up to dump on you together.'));
-    else if(graph.biggestFunder>=3)
-      f.push(F('warn','Are top wallets connected?','Yes \u2014 '+graph.biggestFunder+' share a funder','Several top wallets were funded by the same address. They may be one person pretending to be many holders.',graph.funderAddr?short(graph.funderAddr):''));
-    else if(firsts.length>=3)
-      f.push(F('pass','Are top wallets connected?','No obvious links','Top holders got their tokens separately, not from one bundle or one funder.'));
+  /* connections + bundle: one shared call, same data the verdict uses */
+  let edges=[],bundle=null;
+  try{ bundle=await bundleCheck(addr,pool); }catch(e){ bundle={maxRecipients:0,maxFunder:0,complete:false}; }
+  if(bundle&&bundle.firstIn){
+    const byTx={},byFunder={};
+    const topSet=new Set(wallets.slice(0,14).map(r=>r.addr));
+    for(const a in bundle.firstIn){
+      if(!topSet.has(a))continue;
+      const f=bundle.firstIn[a];
+      if(f.tx)(byTx[f.tx]=byTx[f.tx]||[]).push(a);
+      if(f.funder&&f.funder!==pool&&f.funder!==ZERO)(byFunder[f.funder]=byFunder[f.funder]||[]).push(a);
+    }
+    const seen=new Set();
+    Object.values(byTx).forEach(as=>{if(as.length>=2)for(let i=0;i<as.length;i++)for(let j=i+1;j<as.length;j++){
+      const k=[as[i],as[j]].sort().join('|');if(!seen.has(k)){edges.push({a:as[i],b:as[j],type:'bundle'});seen.add(k);}}});
+    Object.values(byFunder).forEach(as=>{if(as.length>=2)for(let i=0;i<as.length;i++)for(let j=i+1;j<as.length;j++){
+      const k=[as[i],as[j]].sort().join('|');if(!seen.has(k)){edges.push({a:as[i],b:as[j],type:'funder'});seen.add(k);}}});
   }
+  if(bundle&&bundle.maxRecipients>=3)
+    f.push(F('fail','Were coins handed out in one bundle?','Yes \u2014 '+bundle.maxRecipients+' wallets','Several wallets received their tokens in the exact same transaction. That\u2019s a bundled launch \u2014 insiders set up to dump on you together.',bundle.bundleTx?'tx '+short(bundle.bundleTx):''));
+  else if(bundle&&bundle.maxFunder>=3)
+    f.push(F('warn','Are top wallets connected?','Yes \u2014 '+bundle.maxFunder+' share a funder','Several wallets were funded by the same address. They may be one person pretending to be many holders.',bundle.funderAddr?short(bundle.funderAddr):''));
+  else if(bundle&&bundle.complete)
+    f.push(F('pass','Bundled or sniped launch?','No sign','Wallets received tokens in separate transactions from different sources.'));
+  else
+    f.push(F('unknown','Bundled launch?','Couldn\u2019t verify','The explorer didn\u2019t return full transfer history for this token.'));
 
   const bubbles=rows.slice(0,22).map(r=>({addr:r.addr,pct:pct(r.val),
     kind:r.addr===pool?'pool':(creator&&r.addr===creator)?'creator':sys.has(r.addr)?'burn':r.isC?'contract':pct(r.val)>=5?'whale':'holder'}));
   const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
-  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,bubbles,edges,dec,findings:f};
+  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,bubbles,edges,dec,bundle,conc:{top1:(wallets.length?pct(wallets[0].val):0),top10:(function(){let c=0n;for(let i=0;i<10&&i<wallets.length;i++)c+=wallets[i].val;return pct(c);})(),equalCluster:0},findings:f};
 }
 
 /* ===== 3. LIQUIDITY ===== */
@@ -866,57 +920,66 @@ async function enrich(list){
   return list.filter(t=>t.code&&t.code!=='0x'&&(t.sym||t.name));
 }
 
-/* triage label. This now runs the SAME live sell simulation the full scan uses,
-   so a honeypot can never be labeled safe. Best possible label is "Looks OK",
-   never "Clean" \u2014 the list is a screen, not a guarantee. */
+/* Terminal triage. Runs the SAME signal set as the full scan and feeds the
+   SAME verdictFrom(), so a token can never read "Looks OK" in the list and
+   "Avoid" in the full report. */
 async function quickLabel(t){
   const rt=strip(t.code),has=s=>rt.includes(s);
-  const danger=has(SEL.mint)||has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist);
-  const proxy=rt.length>0&&rt.length<800&&rt.indexOf('363d3d373d3d3d363d73')>=0;
-  if(danger){t.label='unsafe';t.why=proxy?'Minimal proxy \u2014 logic can change':'Mint or blacklist function present';return t;}
+  const flags={
+    hasCode:rt.length>0,
+    mint:has(SEL.mint),
+    blacklist:has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist),
+    pausable:has(SEL.pause),
+    feeSetter:has(SEL.setFees)||has(SEL.setTaxes)||has(SEL.setFee),
+    limits:has(SEL.setMaxTx)||has(SEL.setMaxWallet),
+    proxy:rt.length>0&&rt.length<800&&rt.indexOf('363d3d373d3d3d363d73')>=0
+  };
+  if(!flags.hasCode||flags.mint||flags.blacklist||flags.proxy){
+    const v=verdictFrom({flags});Object.assign(t,v);return t;
+  }
 
-  /* holders + pool */
   let holders=null;
-  try{holders=(await scout('/api/v2/tokens/'+t.addr+'/holders')).items;}catch(e){}
-  if(!holders||!holders.length){t.label='unknown';t.why='No holder data yet \u2014 treat as high risk';return t;}
+  try{holders=(await scout('/api/v2/tokens/'+t.addr+'/holders',2)).items;}catch(e){}
+  if(!holders||!holders.length){Object.assign(t,verdictFrom({flags,conc:null}));return t;}
+
   const sys=new Set([ZERO,DEAD,t.addr.toLowerCase()]);
   const rows=holders.map(h=>({addr:(h.address&&h.address.hash||h.address).toLowerCase(),
-    isC:!!(h.address&&h.address.is_contract),val:BigInt(h.value)})).filter(r=>r.val>0n&&!sys.has(r.addr))
-    .sort((a,b)=>b.val<a.val?-1:1);
+    isC:!!(h.address&&h.address.is_contract),val:BigInt(h.value)}))
+    .filter(r=>r.val>0n&&!sys.has(r.addr)).sort((a,b)=>b.val<a.val?-1:1);
   const pool=(rows.find(r=>r.isC)||{}).addr||null; t.pool=pool;
   const wallets=rows.filter(r=>r.addr!==pool);
   const total=t.supply>0n?t.supply:rows.reduce((s,r)=>s+r.val,0n);
-  if(total===0n){t.label='unknown';t.why='No supply';return t;}
+  if(total===0n){Object.assign(t,verdictFrom({flags,conc:null}));return t;}
   const sampleHolder=(wallets.find(r=>!r.isC)||wallets[0]||rows[0]||{}).addr||null;
 
-  /* LIVE sell simulation \u2014 the piece that was missing */
-  let sellBlocked=false,transferFrozen=false,simRan=false;
+  /* live sell sim */
+  let sim={ran:false};
   if(sampleHolder&&pool){
-    simRan=true;
+    sim.ran=true;
     const rand='0x'+kstr('rhscan-t-'+t.addr).slice(0,40),amt=pad32(1n);
     let w=null,p=null;
     try{await call(t.addr,TRANSFER_SEL+padAddr(rand)+amt,sampleHolder);w=true;}catch(e){w=false;}
     try{await call(t.addr,TRANSFER_SEL+padAddr(pool)+amt,sampleHolder);p=true;}catch(e){p=false;}
-    if(w===false)transferFrozen=true;
-    else if(p===false)sellBlocked=true;
+    sim.transferFrozen=(w===false);
+    sim.sellBlocked=(w===true&&p===false);
   }
-  if(transferFrozen){t.label='unsafe';t.why='Live test: wallets can\u2019t move this token (frozen)';return t;}
-  if(sellBlocked){t.label='unsafe';t.why='Live test: selling into the pool is blocked \u2014 honeypot pattern';return t;}
 
-  /* concentration + bundle */
+  /* concentration */
+  const pct=v=>Number(v*100000n/total)/1000;
   const freq={};wallets.forEach(w=>{const k=w.val.toString();freq[k]=(freq[k]||0)+1;});
   const minChunk=total/200n;
   let equalCluster=0;for(const k in freq)if(freq[k]>=3&&BigInt(k)>=minChunk)equalCluster=Math.max(equalCluster,freq[k]);
-  const top1=wallets.length?Number(wallets[0].val*10000n/total)/100:0;
+  const top1=wallets.length?pct(wallets[0].val):0;
   let cum=0n;for(let i=0;i<10&&i<wallets.length;i++)cum+=wallets[i].val;
-  const top10=Number(cum*10000n/total)/100;
-  t.top1=top1;t.top10=top10;
+  const conc={top1,top10:pct(cum),equalCluster};
+  t.top1=top1;t.top10=conc.top10;
 
-  if(top1>=30||top10>=85){t.label='unsafe';t.why='Extreme concentration \u2014 top wallet '+top1.toFixed(1)+'%';return t;}
-  if(equalCluster>=3){t.label='bundled';t.why=equalCluster+' wallets hold identical amounts \u2014 likely one owner';return t;}
-  if(top10>=70){t.label='bundled';t.why='Top 10 hold '+top10.toFixed(0)+'%';return t;}
-  if(!simRan){t.label='caution';t.why='No pool/holder to simulate a sell \u2014 unverified, be careful';return t;}
-  t.label='ok';t.why='Live sell test passed, no mint/blacklist, spread ownership \u2014 still not a guarantee';
+  /* THE MISSING CHECK: same-transaction bundle, identical to the full scan */
+  let bundle=null;
+  try{bundle=await bundleCheck(t.addr,pool);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
+  t.bundle=bundle;
+
+  Object.assign(t,verdictFrom({flags,conc,sim,bundle}));
   return t;
 }
 
@@ -994,7 +1057,7 @@ async function priceSeries(token){
 }
 
 /* ===== render ===== */
-const VWORD={fail:'Danger',warn:'Caution',pass:'Clear',unknown:'Unknown'};
+const VWORD={fail:'Danger',warn:'Caution',pass:'No flags',unknown:'Unknown'};
 function renderModules(mods){
   const host=$('modules');host.innerHTML='';
   mods.forEach((m,i)=>{
@@ -1013,27 +1076,37 @@ function shareUrl(addr,sym,big){
   const text=(sym?'$'+sym:'This token')+' on Robinhood Chain: '+big+'\n\nScanned with Robinhood Chain Scanner (unofficial):';
   return 'https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(page);
 }
-function renderVerdict(mods,addr,sym){
-  const core=['sell','holders','lp'];
-  const anyFail=mods.some(m=>m.status==='fail');
-  const anyWarn=mods.some(m=>m.status==='warn');
-  const coreUnknown=mods.filter(m=>core.includes(m.id)&&m.status==='unknown').length;
-  let cls,big,sub,status;
-  if(anyFail){cls='avoid';status='fail';big='Avoid this one';sub='At least one serious red flag \u2014 read the details below.';}
-  else if(coreUnknown){cls='unknown';status='unknown';big='Can\u2019t fully check it';sub='Key data was missing, so this is NOT a clean bill of health. Brand-new tokens land here \u2014 high risk.';}
-  else if(anyWarn){cls='risky';status='warn';big='Risky \u2014 be careful';sub='No dealbreakers, but things to watch. Test with a tiny amount first.';}
-  else{cls='ok';status='pass';big='Looks okay';sub='The checks that ran found no traps. Still not a guarantee.';}
+function renderVerdict(mods,addr,sym,shared){
+  /* `shared` is the verdictFrom() result computed from the same signals the
+     terminal chip uses. When present it drives the banner, guaranteeing the
+     list and the report can never disagree. */
+  let cls,big,sub,status,label=null;
+  if(shared){
+    label=shared.label;
+    if(label==='avoid'||label==='bundled'){cls='avoid';status='fail';big='Avoid this one';sub=shared.why;}
+    else if(label==='caution'){cls='risky';status='warn';big='Risky \u2014 be careful';sub=shared.why;}
+    else if(label==='unknown'){cls='unknown';status='unknown';big='Can\u2019t fully check it';sub=shared.why;}
+    else{cls='ok';status='pass';big='Looks okay';sub=shared.why;}
+  }else{
+    const core=['sell','holders','lp'];
+    const anyFail=mods.some(m=>m.status==='fail');
+    const anyWarn=mods.some(m=>m.status==='warn');
+    const coreUnknown=mods.filter(m=>core.includes(m.id)&&m.status==='unknown').length;
+    if(anyFail){cls='avoid';status='fail';big='Avoid this one';sub='At least one serious red flag \u2014 read the details below.';}
+    else if(coreUnknown){cls='unknown';status='unknown';big='Can\u2019t fully check it';sub='Key data was missing \u2014 this is NOT a clean bill of health.';}
+    else if(anyWarn){cls='risky';status='warn';big='Risky \u2014 be careful';sub='No dealbreakers, but things to watch.';}
+    else{cls='ok';status='pass';big='Looks okay';sub='The checks that ran found no traps. Still not a guarantee.';}
+  }
   $('banner').className='banner '+cls;$('vbig').textContent=big;$('vsub').textContent=sub;
-
   let acts='<a class="act" href="'+shareUrl(addr,sym,big)+'" target="_blank" rel="noopener">Share on X</a>';
   if(status==='pass')acts='<a class="act buy" href="'+UNISWAP+addr+'" target="_blank" rel="noopener nofollow">Trade on Uniswap \u2197</a>'+acts;
   $('actions').innerHTML=acts;
   $('buywarn').textContent = status==='pass'
-    ? '\u201cLooks okay\u201d means our checks found no traps \u2014 it is not a recommendation, and this tool earns nothing if you trade. Prices move, teams change, scanners miss things. Start small.'
+    ? '\u201cLooks okay\u201d means our checks found no traps \u2014 it is not a recommendation, and this tool earns nothing if you trade. Start small.'
     : '';
   renderModules(mods);
   $('verdict').classList.add('show');
-  return status;
+  return {status,label};
 }
 
 async function run(){
@@ -1068,9 +1141,29 @@ async function run(){
     log('\u203a liquidity lock\u2026');
     const mL=await modLiquidity(addr,mH.pool,dec);log('  '+mL.status,mL.status==='fail'?'er':'ok');
 
+    /* One verdict, computed from the same signals the terminal chip uses,
+       so the list and this report can never disagree. */
+    let shared=null;
+    try{
+      const rt=strip(await getCode(addr)),has=s=>rt.includes(s);
+      const flags={hasCode:rt.length>0,mint:has(SEL.mint),
+        blacklist:has(SEL.addBlackList)||has(SEL.blacklist)||has(SEL.setBlacklist),
+        pausable:has(SEL.pause),feeSetter:has(SEL.setFees)||has(SEL.setTaxes)||has(SEL.setFee),
+        limits:has(SEL.setMaxTx)||has(SEL.setMaxWallet),
+        proxy:rt.length>0&&rt.length<800&&rt.indexOf('363d3d373d3d3d363d73')>=0};
+      const simFail=t=>mS.findings.some(f=>f.sev==='fail'&&t.test(f.a+' '+(f.why||'')));
+      const sim={ran:!!(mH.sampleHolder&&mH.pool),
+        transferFrozen:simFail(/frozen/i),
+        sellBlocked:simFail(/honeypot|can.t sell/i)};
+      const lpNA=mL.findings.some(f=>/N\/A on this pool/i.test(f.a||''));
+      const lpF=mL.findings.find(f=>/burned or locked/i.test(f.q||''));
+      const lp=lpNA?{kind:'v3v4'}:{kind:'v2',securedPct:lpF?parseFloat(lpF.a):null};
+      shared=verdictFrom({flags,conc:mH.conc,sim,lp,bundle:mH.bundle});
+    }catch(e){shared=null;}
+
     await renderTokenCard(addr,name,sym);
-    const status=renderVerdict([mS,mH,mL],addr,sym);
-    pushRecent(addr,name,sym,status);
+    const res=renderVerdict([mS,mH,mL],addr,sym,shared);
+    pushRecent(addr,name,sym,res.status,res.label);
     log('\u2713 done','ok');
   }catch(e){showErr('<b>Something went wrong:</b> '+esc(String(e.message||e)));log('\u2717 '+String(e.message||e),'er');}
   finally{btn.disabled=false;btn.textContent='Check this token';}
@@ -1141,7 +1234,7 @@ function renderChart(host,series){
 
 /* ===== terminal ===== */
 let TERM_TAB='newest';
-const CHIP_TEXT={ok:'Looks OK',caution:'Caution',bundled:'Bundled',unsafe:'Unsafe',unknown:'No data',pend:'checking'};
+const CHIP_TEXT=LABEL_TEXT;
 function tRow(t){
   const el=document.createElement('div');el.className='trow';
   const mc=t.mkt&&money(t.mkt.mcap),vol=t.mkt&&money(t.mkt.vol),liq=t.mkt&&money(t.mkt.liq);
