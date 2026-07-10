@@ -324,6 +324,18 @@
   .logline.er{color:var(--red)}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(0,0,0,.3);border-top-color:#000;border-radius:50%;animation:sp .6s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
+
+  .scanbtn{width:100%;background:var(--green);color:#000;border:none;border-radius:9px;padding:15px;
+    font-weight:800;font-size:15.5px;cursor:pointer;font-family:inherit;letter-spacing:-.01em;margin-top:10px}
+  .scanbtn:hover{filter:brightness(1.06)}
+  .scanbtn:disabled{opacity:.7;cursor:default}
+  #addr{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    padding:15px;font-size:15px;color:var(--fg);font-family:var(--mono);outline:none;box-sizing:border-box}
+  #addr:focus{border-color:var(--green-dim)}
+  #addr::placeholder{color:var(--fg-faint)}
+  .scanbox{margin-top:14px}
+  .log{margin-top:10px}
+  #result{margin-top:4px}
 </style>
 </head>
 <body>

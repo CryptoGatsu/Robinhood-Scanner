@@ -34,6 +34,11 @@ export default async function handler(req, res) {
   let data = await kvGet(key);
   if (!data) {
     try {
+      // Fail loudly if the RPC isn't configured, so the UI can say so instead
+      // of silently reporting every token as "no contract code".
+      if (!process.env.RPC_URL) {
+        return res.status(503).json({ error: 'RPC_URL is not set on the server. Add it in Vercel → Settings → Environment Variables, then redeploy.' });
+      }
       data = await scanToken(addr);
       // price series + entry signal computed alongside
       let series = { kind: 'none' };
