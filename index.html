@@ -460,19 +460,24 @@ async function fetchMarket(addr,totalSupply,dec){
    full-scan banner are computed from the SAME signals, so they can
    never disagree again.
    =================================================================== */
-async function bundleCheck(tokenAddr, poolAddr){
+async function bundleCheck(tokenAddr, poolAddr, maxPages){
   const skip=new Set([ZERO,(poolAddr||'').toLowerCase(),tokenAddr.toLowerCase()]);
-  let url='/api/v2/tokens/'+tokenAddr+'/transfers?type=ERC-20';
+  /* NOTE: this endpoint takes NO `type` param \u2014 sending one returns 422. */
+  let url='/api/v2/tokens/'+tokenAddr+'/transfers';
   const items=[];let complete=false;
-  for(let page=0;page<6;page++){
+  const pages=maxPages||3;
+  for(let page=0;page<pages;page++){
     let j=null;
     try{j=await scout(url,1);}catch(e){break;}
     if(!j||!j.items||!j.items.length){complete=true;break;}
     items.push.apply(items,j.items);
     const np=j.next_page_params;
     if(!np){complete=true;break;}
-    const qs=Object.keys(np).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
-    url='/api/v2/tokens/'+tokenAddr+'/transfers?type=ERC-20&'+qs;
+    /* drop null/undefined params \u2014 they serialise to the string "null" and 422 */
+    const qs=Object.keys(np).filter(k=>np[k]!==null&&np[k]!==undefined)
+      .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
+    if(!qs){complete=true;break;}
+    url='/api/v2/tokens/'+tokenAddr+'/transfers?'+qs;
   }
   if(!items.length)return{maxRecipients:0,maxFunder:0,complete:false,firstIn:{}};
 
@@ -591,7 +596,7 @@ async function modHolders(addr,dec){
 
   /* connections + bundle: one shared call, same data the verdict uses */
   let edges=[],bundle=null;
-  try{ bundle=await bundleCheck(addr,pool); }catch(e){ bundle={maxRecipients:0,maxFunder:0,complete:false}; }
+  try{ bundle=await bundleCheck(addr,pool,6); }catch(e){ bundle={maxRecipients:0,maxFunder:0,complete:false}; }
   if(bundle&&bundle.firstIn){
     const byTx={},byFunder={};
     const topSet=new Set(wallets.slice(0,14).map(r=>r.addr));
@@ -976,7 +981,7 @@ async function quickLabel(t){
 
   /* THE MISSING CHECK: same-transaction bundle, identical to the full scan */
   let bundle=null;
-  try{bundle=await bundleCheck(t.addr,pool);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
+  try{bundle=await bundleCheck(t.addr,pool,3);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
   t.bundle=bundle;
 
   Object.assign(t,verdictFrom({flags,conc,sim,bundle}));
