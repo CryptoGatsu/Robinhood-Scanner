@@ -219,6 +219,30 @@
   .agechip{display:inline-block;margin-left:7px;padding:1px 6px;border-radius:5px;font-size:10.5px;
     font-weight:700;color:var(--green);background:rgba(0,200,5,.1);border:1px solid rgba(0,200,5,.22);
     vertical-align:middle;font-family:var(--mono)}
+
+  .wbtn{margin-left:auto;background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);
+    border-radius:8px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .wbtn:hover{border-color:var(--green-dim);color:var(--green)}
+  .wbtn.on{color:var(--green);border-color:var(--green-dim);background:rgba(0,200,5,.08);font-family:var(--mono)}
+  .castrip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 11px;
+    background:var(--surface);border:1px solid var(--line);border-radius:9px}
+  .calabel{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--green)}
+  .camono{font-family:var(--mono);font-size:11px;color:var(--fg-dim);word-break:break-all;flex:1;min-width:0}
+  .cacopy,.calink{background:none;border:none;color:var(--fg-faint);font-size:11px;cursor:pointer;
+    font-family:inherit;text-decoration:none;padding:2px 4px}
+  .cacopy:hover,.calink:hover{color:var(--green)}
+  .gate{margin-top:10px;display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+  .gpill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px}
+  .gpill.hold{color:var(--green);background:rgba(0,200,5,.1);border:1px solid rgba(0,200,5,.25)}
+  .gpill.free{color:var(--fg-faint);background:var(--surface-2);border:1px solid var(--line)}
+  .gsub{font-size:11px;color:var(--fg-faint)}
+  .paywall{margin-top:12px;padding:16px;background:linear-gradient(180deg,rgba(0,200,5,.06),var(--surface));
+    border:1px solid rgba(0,200,5,.25);border-radius:var(--r);text-align:center}
+  .pw-h{font-size:15px;font-weight:800;color:var(--fg);margin-bottom:6px}
+  .pw-b{font-size:12.5px;color:var(--fg-dim);line-height:1.6;margin-bottom:12px}
+  .pw-a{display:inline-block;background:var(--green);color:#000;font-weight:800;font-size:13px;
+    padding:10px 20px;border-radius:9px;text-decoration:none}
+  .pw-a:hover{filter:brightness(1.08)}
 </style>
 </head>
 <body>
@@ -226,15 +250,24 @@
   <header>
     <div class="brand">
       <div class="name">Robin<span style="color:var(--green)">Scan</span></div>
+      <button id="wbtn" class="wbtn" title="Read-only. No signature, no transaction.">Connect wallet</button>
       <span class="unofficial">Unofficial</span>
     </div>
     <p class="tagline">Three questions before you buy: can you sell it, who holds it, and is the liquidity locked.</p>
+    <div class="castrip">
+      <span class="calabel">$ROBINSCAN CA</span>
+      <code class="camono" id="caText">0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a</code>
+      <button class="cacopy" id="caCopy">copy</button>
+      <a class="calink" href="https://dexscreener.com/robinhood/0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a" target="_blank" rel="noopener">chart ↗</a>
+      <a class="calink" href="https://robinhoodchain.blockscout.com/token/0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a" target="_blank" rel="noopener">explorer ↗</a>
+    </div>
   </header>
 
   <div class="panel">
     <input id="addr" class="mono" placeholder="0x… paste token address" autocomplete="off" spellcheck="false" />
     <button id="scan" class="btn">Check this token</button>
-    <div class="hint">Reads public blockchain data only. Never asks you to connect a wallet, sign, or send anything.</div>
+    <div class="hint">Reads public blockchain data. Connecting a wallet is optional and read-only — RobinScan never requests a signature, a transaction, or approval.</div>
+    <div class="gate" id="gstatus"></div>
     <div class="err-box" id="errbox"></div>
   </div>
 
@@ -434,7 +467,7 @@ const logEl=$('log');
 function log(m,c){logEl.classList.add('show');const d=document.createElement('div');if(c)d.className=c;d.textContent=m;logEl.appendChild(d);}
 function clearLog(){logEl.innerHTML='';logEl.classList.remove('show');}
 function showErr(h){$('errbox').innerHTML=h;$('errbox').classList.add('show');}
-function hideErr(){$('errbox').classList.remove('show');}
+function hideErr(){const _e=$('err');if(_e)_e.className='err';$('errbox').classList.remove('show');}
 function F(sev,q,a,why,ev){return{sev,q,a,why,ev};}
 
 /* ===== recently scanned (memory + best-effort persistence) ===== */
@@ -841,6 +874,12 @@ const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffb
 const TOPIC_POOL_CREATED='0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118';
 const TOPIC_PAIR_CREATED='0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9';
 const SEL_FACTORY='c45a0155';
+
+/* ---- $ROBINSCAN token gating ---- */
+const TOKEN_CA='0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a';
+const TOKEN_CA_LC=TOKEN_CA.toLowerCase();
+const MIN_HOLD=1000;          /* tokens needed for unlimited scans */
+const FREE_SCANS=5;           /* daily scans for everyone else */
 const TOPIC_V3SWAP='0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67';
 const Q96=2n**96n;
 const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -1413,7 +1452,14 @@ async function run(){
   hideErr();clearLog();$('verdict').classList.remove('show');
   const addr=$('addr').value.trim().toLowerCase();
   if(!/^0x[0-9a-f]{40}$/.test(addr)){showErr('<b>That doesn\u2019t look like a token address.</b> Paste the full 0x\u2026 address (42 characters).');return;}
+
+  /* token gate: holders scan freely, everyone else gets FREE_SCANS per UTC day */
+  const g=gateCheck();
+  if(!g.allow){showPaywall();return;}
+
   const btn=$('scan');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  if(!IS_HOLDER)bumpQuota();
+  renderGate();
   try{
     let codeHex=null;
     log('\u203a connecting\u2026');
@@ -1503,6 +1549,128 @@ $('scan').addEventListener('click',run);
 $('addr').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
 
 
+
+/* ===================================================================
+   Token gating. The balance read is real (on-chain eth_call), but the
+   ENFORCEMENT runs in this browser, so a determined user can bypass it
+   with devtools. That's inherent to a client-only app.
+   =================================================================== */
+let WALLET=null, WALLET_BAL=0n, WALLET_DEC=18, IS_HOLDER=false;
+
+function todayKey(){return new Date().toISOString().slice(0,10);}
+function readQuota(){
+  try{
+    const q=JSON.parse(localStorage.getItem('rhscan.quota')||'null');
+    if(!q||q.day!==todayKey())return{day:todayKey(),used:0};
+    return q;
+  }catch(e){return{day:todayKey(),used:0};}
+}
+function bumpQuota(){
+  const q=readQuota();q.used++;
+  try{localStorage.setItem('rhscan.quota',JSON.stringify(q));}catch(e){}
+  return q;
+}
+function scansLeft(){return Math.max(0,FREE_SCANS-readQuota().used);}
+
+function gateCheck(){
+  if(IS_HOLDER)return{allow:true,reason:'holder'};
+  const used=readQuota().used;
+  if(used<FREE_SCANS)return{allow:true,reason:'free',left:FREE_SCANS-used-1};
+  return{allow:false,reason:'limit'};
+}
+
+/* Balance is read through OUR rpc, not the wallet's provider. That means the
+   user never has to switch networks, and we never push our RPC into their
+   wallet config. No signature is requested. */
+async function refreshHolding(){
+  if(!WALLET){IS_HOLDER=false;WALLET_BAL=0n;renderGate();return;}
+  try{
+    if(!WALLET_DEC_READ){
+      try{WALLET_DEC=Number(toBig(await call(TOKEN_CA_LC,READ.decimals)))||18;}catch(e){WALLET_DEC=18;}
+      WALLET_DEC_READ=true;
+    }
+    WALLET_BAL=toBig(await call(TOKEN_CA_LC,SEL.balanceOf+padAddr(WALLET)));
+    const need=BigInt(MIN_HOLD)*(10n**BigInt(WALLET_DEC));
+    IS_HOLDER=WALLET_BAL>=need;
+  }catch(e){IS_HOLDER=false;}
+  renderGate();
+}
+let WALLET_DEC_READ=false;
+
+function fmtBal(){
+  if(!WALLET_BAL)return '0';
+  const whole=WALLET_BAL/(10n**BigInt(WALLET_DEC));
+  return Number(whole).toLocaleString();
+}
+
+async function connectWallet(){
+  const eth=window.ethereum;
+  if(!eth){
+    alert('No browser wallet found. Install MetaMask, Rabby, or another EIP-1193 wallet.');
+    return;
+  }
+  try{
+    const accts=await eth.request({method:'eth_requestAccounts'});
+    if(!accts||!accts.length)return;
+    WALLET=accts[0].toLowerCase();
+    try{localStorage.setItem('rhscan.wallet',WALLET);}catch(e){}
+    await refreshHolding();
+    if(eth.on&&!eth._rhscanBound){
+      eth._rhscanBound=true;
+      eth.on('accountsChanged',a=>{WALLET=(a&&a[0])?a[0].toLowerCase():null;
+        try{a&&a[0]?localStorage.setItem('rhscan.wallet',WALLET):localStorage.removeItem('rhscan.wallet');}catch(e){}
+        refreshHolding();});
+    }
+  }catch(e){
+    if(e&&e.code===4001)return;   /* user rejected */
+    alert('Couldn\u2019t connect: '+String(e.message||e));
+  }
+}
+function disconnectWallet(){
+  WALLET=null;WALLET_BAL=0n;IS_HOLDER=false;
+  try{localStorage.removeItem('rhscan.wallet');}catch(e){}
+  renderGate();
+}
+
+function showPaywall(){
+  const box=$('err');
+  if(!box)return;
+  box.className='paywall';
+  box.innerHTML='<div class="pw-h">Daily free scans used</div>'
+    +'<div class="pw-b">You\u2019ve used all '+FREE_SCANS+' free scans for today. '
+    +'Hold <b>'+MIN_HOLD.toLocaleString()+' $ROBINSCAN</b> for unlimited scanning, '
+    +'or come back after midnight UTC.</div>'
+    +'<a class="pw-a" href="https://dexscreener.com/robinhood/'+TOKEN_CA+'" target="_blank" rel="noopener">Get $ROBINSCAN \u2197</a>'
+    +(WALLET?'':'<div class="pw-b" style="margin-top:10px;margin-bottom:0">Already holding? '
+      +'<a href="#" id="pwConnect" style="color:var(--green)">Connect your wallet</a> to unlock.</div>');
+  box.style.display='block';
+  const pc=$('pwConnect');
+  if(pc)pc.onclick=e=>{e.preventDefault();connectWallet();};
+}
+
+function renderGate(){
+  const btn=$('wbtn'),status=$('gstatus');
+  if(!btn||!status)return;
+  if(WALLET){
+    btn.textContent=short(WALLET);
+    btn.classList.add('on');
+    btn.title='Click to disconnect';
+  }else{
+    btn.textContent='Connect wallet';
+    btn.classList.remove('on');
+    btn.title='Read-only. No signature, no transaction.';
+  }
+  if(IS_HOLDER){
+    status.innerHTML='<span class="gpill hold">Holder \u00b7 unlimited scans</span>'
+      +'<span class="gsub">'+fmtBal()+' $ROBINSCAN</span>';
+  }else if(WALLET){
+    status.innerHTML='<span class="gpill free">'+scansLeft()+' of '+FREE_SCANS+' free scans left today</span>'
+      +'<span class="gsub">Hold '+MIN_HOLD.toLocaleString()+'+ $ROBINSCAN for unlimited \u00b7 you have '+fmtBal()+'</span>';
+  }else{
+    status.innerHTML='<span class="gpill free">'+scansLeft()+' of '+FREE_SCANS+' free scans left today</span>'
+      +'<span class="gsub">Connect a wallet to check your $ROBINSCAN balance</span>';
+  }
+}
 
 /* ===== chart ===== */
 function fmtPrice(p){if(!isFinite(p)||p<=0)return '\u2014';
@@ -1664,6 +1832,23 @@ document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');TERM_TAB=b.dataset.tab;loadTerminal(false);}));
 $('termRefresh').addEventListener('click',()=>loadTerminal(true));
+
+/* wallet + contract-address controls */
+(function(){
+  const wb=$('wbtn');
+  if(wb)wb.addEventListener('click',()=>{WALLET?disconnectWallet():connectWallet();});
+  const cc=$('caCopy');
+  if(cc)cc.addEventListener('click',()=>{
+    try{navigator.clipboard.writeText(TOKEN_CA);cc.textContent='copied \u2713';
+      setTimeout(()=>{cc.textContent='copy';},1400);}catch(e){}
+  });
+  /* restore a previously connected wallet without prompting */
+  try{
+    const saved=localStorage.getItem('rhscan.wallet');
+    if(saved&&/^0x[0-9a-f]{40}$/.test(saved)){WALLET=saved;refreshHolding();return;}
+  }catch(e){}
+  renderGate();
+})();
 
 /* collapsible terminal, state remembered */
 (function(){
