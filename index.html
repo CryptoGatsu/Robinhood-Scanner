@@ -191,6 +191,16 @@
   svg.chart{width:100%;height:auto;display:block;touch-action:none;cursor:crosshair}
   .chart-note{font-size:10.5px;color:var(--fg-faint);margin-top:7px;line-height:1.5;min-height:28px}
   .cload{font-size:12px;color:var(--fg-faint);padding:14px 0;text-align:center}
+
+  .term-toggle{display:flex;align-items:center;justify-content:space-between;margin-top:18px;
+    padding:12px 14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    cursor:pointer;user-select:none}
+  .term-toggle:hover{background:var(--surface-2)}
+  .tt-label{font-size:13px;font-weight:600;color:var(--fg-dim)}
+  .tt-caret{color:var(--fg-faint);font-size:12px;transition:transform .2s}
+  .term-toggle.collapsed .tt-caret{transform:rotate(-90deg)}
+  #termWrap{overflow:hidden;transition:max-height .25s ease}
+  #termWrap.collapsed{max-height:0!important}
 </style>
 </head>
 <body>
@@ -216,8 +226,11 @@
     <div class="recent-h"><span>Recently scanned</span><button id="clearRecent">clear</button></div>
     <div class="rlist" id="rlist"></div>
   </div>
-
-
+  <div class="term-toggle" id="termToggle">
+    <span class="tt-label">Live token terminal</span>
+    <span class="tt-caret" id="ttCaret">▾</span>
+  </div>
+  <div id="termWrap">
   <div class="tabs">
     <button class="tab on" data-tab="newest">Newest</button>
     <button class="tab" data-tab="trending">Trending</button>
@@ -225,6 +238,7 @@
   <div class="term">
     <div class="termhead"><span id="termhead">scanning…</span><button id="termRefresh">refresh</button></div>
     <div class="tlist" id="tlist"></div>
+  </div>
   </div>
 
   <div class="verdict" id="verdict">
@@ -488,9 +502,11 @@ function buildEdges(firsts,pool){
   return{edges,biggestBundle,biggestFunder,funderAddr};
 }
 async function fetchFirstInbound(addr,holders){
+  /* best-effort: this Blockscout endpoint 500s for some tokens. One quiet try
+     each, no retries, failures just mean "no connection data" rather than noise. */
   const out=await Promise.all(holders.map(async h=>{
     try{
-      const t=await scout('/api/v2/addresses/'+h+'/token-transfers?token='+addr+'&type=ERC-20');
+      const t=await scout('/api/v2/addresses/'+h+'/token-transfers?token='+addr+'&type=ERC-20',1);
       const ins=(t.items||[]).filter(x=>((x.to&&x.to.hash||'')).toLowerCase()===h);
       if(!ins.length)return null;
       ins.sort((a,b)=>(a.block_number||0)-(b.block_number||0));
@@ -769,17 +785,35 @@ function cacheSet(k,d){_cache[k]={t:Date.now(),d};}
 
 /* Discovery: live chain logs when the endpoint allows chain-wide getLogs,
    otherwise the explorer's token index. Never a storm of failing requests. */
-async function discoverViaExplorer(){
-  const j=await scout('/api/v2/tokens?type=ERC-20');
-  const items=(j.items||[]).filter(t=>t.address||t.address_hash);
-  const rows=items.map(t=>({
+async function fetchTokenPage(query){
+  const j=await scout('/api/v2/tokens?type=ERC-20'+(query||''));
+  return (j.items||[]).map(t=>({
     addr:((t.address&&t.address.hash)||t.address_hash||t.address||'').toLowerCase(),
     name:t.name||'',sym:t.symbol||'',
-    holders:Number(t.holders||t.holder_count||0)
+    holders:Number(t.holders||t.holder_count||0),
+    ts:t.exchange_rate_updated_at||t.created_at||null
   })).filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr));
-  const trending=rows.slice().sort((a,b)=>b.holders-a.holders).slice(0,MAX_TOKENS);
-  const newest=rows.slice(0,MAX_TOKENS);   /* explorer order; not true creation order */
-  return{newest,trending,source:'explorer',scanned:null};
+}
+async function discoverViaExplorer(){
+  /* Blockscout supports sort/order; use it so the two tabs actually differ.
+     holders desc = trending; recency = newest (fallback to circulating vol). */
+  let trending=[],newest=[];
+  try{trending=await fetchTokenPage('&sort=holders_count&order=desc');}catch(e){}
+  try{newest=await fetchTokenPage('&sort=circulating_market_cap&order=asc');}catch(e){}
+  /* if the sort params aren't honored, fall back and force a real difference:
+     trending = most holders, newest = REVERSE of that list (least-established) */
+  if(!trending.length){const base=await fetchTokenPage('');trending=base.slice().sort((a,b)=>b.holders-a.holders);}
+  if(!newest.length||sameList(newest,trending)){
+    const base=trending.length?trending:await fetchTokenPage('');
+    newest=base.slice().sort((a,b)=>a.holders-b.holders); /* fewest holders \u2248 newest */
+  }
+  return{newest:newest.slice(0,MAX_TOKENS),trending:trending.slice(0,MAX_TOKENS),source:'explorer',scanned:null};
+}
+function sameList(a,b){
+  if(!a.length||!b.length)return false;
+  const n=Math.min(a.length,b.length,MAX_TOKENS);
+  let same=0;for(let i=0;i<n;i++)if(a[i].addr===b[i].addr)same++;
+  return same/n>0.8;   /* >80% overlap in the same order = effectively identical */
 }
 async function discoverTokens(){
   const hit=cacheGet('discover');if(hit)return hit;
@@ -1204,12 +1238,32 @@ document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
   b.classList.add('on');TERM_TAB=b.dataset.tab;loadTerminal(false);}));
 $('termRefresh').addEventListener('click',()=>loadTerminal(true));
 
+/* collapsible terminal, state remembered */
+(function(){
+  const tog=$('termToggle'),wrap=$('termWrap'),caret=$('ttCaret');
+  let collapsed=false;
+  try{collapsed=localStorage.getItem('rhscan.term.collapsed')==='1';}catch(e){}
+  function apply(){
+    if(collapsed){tog.classList.add('collapsed');wrap.classList.add('collapsed');wrap.style.maxHeight='0';}
+    else{tog.classList.remove('collapsed');wrap.classList.remove('collapsed');wrap.style.maxHeight='none';}
+  }
+  apply();
+  tog.addEventListener('click',()=>{
+    collapsed=!collapsed;
+    try{localStorage.setItem('rhscan.term.collapsed',collapsed?'1':'0');}catch(e){}
+    if(!collapsed){wrap.style.maxHeight='none';}
+    apply();
+    if(!collapsed&&!wrap.dataset.loaded){wrap.dataset.loaded='1';loadTerminal(false);}
+  });
+  // only auto-load the terminal if it starts expanded
+  if(!collapsed){wrap.dataset.loaded='1';loadTerminal(false);}
+})();
+
 
 /* deep link: ?token=0x… */
 loadRecent();renderRecent();
 (function(){const q=new URLSearchParams(location.search).get('token');
   if(q&&/^0x[0-9a-fA-F]{40}$/.test(q)){$('addr').value=q.toLowerCase();run();}})();
-loadTerminal(false);
 
 </script>
 </body>
