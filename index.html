@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Robinhood Chain Scanner — honeypot &amp; rug check</title>
+<title>RobinScan — Robinhood Chain honeypot &amp; rug check</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23000'/%3E%3Cpath d='M9 24V11c0-3.3 2.7-6 6-6 1.9 0 3.4.6 4.6 1.6-2.3 1.2-3.6 3.1-3.6 5.9V24' stroke='%2300c805' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
   :root{
@@ -201,13 +202,26 @@
   .term-toggle.collapsed .tt-caret{transform:rotate(-90deg)}
   #termWrap{overflow:hidden;transition:max-height .25s ease}
   #termWrap.collapsed{max-height:0!important}
+
+  .aicard{margin-top:10px;background:linear-gradient(180deg,rgba(0,200,5,.05),var(--surface));
+    border:1px solid var(--line);border-radius:var(--r);padding:14px;position:relative}
+  .ai-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .ai-badge{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--green);background:rgba(0,200,5,.1);border:1px solid rgba(0,200,5,.25);border-radius:4px;padding:3px 7px}
+  .ai-sub{font-size:11px;color:var(--fg-faint)}
+  .ai-body{margin:0;font-size:13.5px;line-height:1.65;color:var(--fg-dim)}
+  .ai-copy{position:absolute;top:12px;right:12px;background:var(--surface-2);border:1px solid var(--line);
+    color:var(--fg-faint);border-radius:6px;padding:4px 9px;font-size:11px;cursor:pointer;font-family:inherit}
+  .ai-copy:hover{color:var(--green);border-color:var(--green-dim)}
+  .chartcard{margin-top:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+  .cc-h{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint);margin-bottom:8px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="brand">
-      <div class="name">Robinhood Chain Scanner</div>
+      <div class="name">Robin<span style="color:var(--green)">Scan</span></div>
       <span class="unofficial">Unofficial</span>
     </div>
     <p class="tagline">Three questions before you buy: can you sell it, who holds it, and is the liquidity locked.</p>
@@ -530,6 +544,80 @@ function verdictFrom({flags,conc,sim,lp,bundle}){
   if(soft.length)return{label:'caution',why:'Owner switches present: '+soft.join(', ')};
   return{label:'ok',why:'Live sell test passed, no bundle, no dangerous switches \u2014 still not a guarantee'};
 }
+/* Analyst overview, generated from the scan signals only. Deterministic:
+   it never states a number that wasn't measured. */
+function buildOverview(o){
+  const S=o.sym?'$'+o.sym:(o.name||'This token');
+  const b=[];
+  b.push(({
+    avoid:S+' fails at least one check that can cost you everything.',
+    bundled:S+' shows signs of a coordinated launch.',
+    caution:S+' has no dealbreakers, but some things are unverified or adjustable.',
+    ok:S+' passed every check RobinScan can run.',
+    unknown:S+' can\u2019t be assessed yet \u2014 there isn\u2019t enough on-chain history.'
+  })[o.label]||(S+' was scanned.'));
+
+  if(o.sim&&o.sim.sellBlocked)b.push('A live simulation showed a real holder cannot sell into the pool. That is the defining honeypot pattern: you can buy, then you\u2019re stuck.');
+  else if(o.sim&&o.sim.transferFrozen)b.push('Transfers are frozen right now \u2014 even wallet-to-wallet moves revert.');
+  else if(o.sim&&o.sim.ran)b.push('A live simulation confirmed a real holder can move the token and sell it into the pool.');
+  else b.push('No sell simulation was possible \u2014 no pool or no holder to test from, which usually means trading hasn\u2019t really started.');
+
+  const p=[];const f=o.flags||{};
+  if(f.mint)p.push('mint new supply');
+  if(f.blacklist)p.push('freeze individual wallets');
+  if(f.proxy)p.push('rewrite the contract');
+  if(f.pausable)p.push('pause all trading');
+  if(f.feeSetter)p.push('change the trading tax');
+  if(f.limits)p.push('shrink your maximum sell');
+  b.push(p.length?('The owner retains the ability to '+p.slice(0,3).join(', ')+(p.length>3?', and more':'')+'.')
+                 :'The contract exposes no mint, freeze, pause, or tax-change switches.');
+
+  if(o.conc){
+    if(o.bundle&&o.bundle.maxRecipients>=3)
+      b.push(o.bundle.maxRecipients+' wallets received their tokens in a single transaction \u2014 a bundled distribution, where insiders are positioned to exit together.');
+    else if(o.bundle&&o.bundle.maxFunder>=3)
+      b.push(o.bundle.maxFunder+' of the largest wallets were funded by one address, so the holder count overstates how many people really own this.');
+    const t1=o.conc.top1||0,t10=o.conc.top10||0;
+    if(t1>=30)b.push('The largest non-pool wallet holds '+t1.toFixed(1)+'% \u2014 one sell would collapse the price.');
+    else if(t1>=5)b.push('The largest wallet holds '+t1.toFixed(1)+'%, with the top ten at '+t10.toFixed(1)+'%.');
+    else b.push('Ownership looks spread out: largest wallet '+t1.toFixed(2)+'%, top ten '+t10.toFixed(1)+'%'+(o.holderCount?', across '+o.holderCount.toLocaleString()+' holders':'')+'.');
+  }
+
+  if(o.lp&&o.lp.kind==='v2'&&o.lp.securedPct!=null){
+    if(o.lp.securedPct>=95)b.push('Liquidity is effectively locked: '+o.lp.securedPct.toFixed(0)+'% of the LP is burned or held in a locker.');
+    else if(o.lp.securedPct<50)b.push('Only '+o.lp.securedPct.toFixed(0)+'% of the LP is burned or locked, so the team can withdraw the liquidity at will.');
+    else b.push(o.lp.securedPct.toFixed(0)+'% of the LP is secured; the rest can still be pulled.');
+  }else if(o.lp&&o.lp.kind==='v3v4'){
+    b.push('This pool holds liquidity as an NFT position rather than a burnable LP token, so \u201cLP burned\u201d doesn\u2019t apply \u2014 judge it on depth and who owns the position.');
+  }
+
+  if(o.mkt){
+    const m=[];
+    if(o.mkt.mcap)m.push('a '+money(o.mkt.mcap)+' market cap');
+    if(o.mkt.vol!=null&&o.mkt.vol>0)m.push(money(o.mkt.vol)+' of 24-hour volume');
+    if(o.mkt.liq)m.push(money(o.mkt.liq)+' of liquidity');
+    if(m.length)b.push('It trades with '+m.join(', ')+'.');
+    if(o.mkt.liq&&o.mkt.mcap&&o.mkt.liq<o.mkt.mcap*0.02)
+      b.push('Liquidity is thin relative to market cap \u2014 expect heavy slippage on real size.');
+  }
+
+  b.push(o.label==='ok'
+    ? 'None of this is a guarantee. Scanners miss things and teams change. Test with a small amount first.'
+    : 'Treat this as information, not advice. Never risk more than you can lose.');
+  return b.join(' ');
+}
+/* a one-line version for sharing */
+function overviewShort(o){
+  const S=o.sym?'$'+o.sym:'This token';
+  if(o.label==='avoid'&&o.sim&&o.sim.sellBlocked)return S+' is a honeypot \u2014 a live test shows you can buy but not sell.';
+  if(o.label==='avoid')return S+' has a serious red flag: '+(o.why||'').replace(/\s+\u2014.*$/,'')+'.';
+  if(o.label==='bundled'&&o.bundle&&o.bundle.maxRecipients>=3)return S+': '+o.bundle.maxRecipients+' wallets were funded in one transaction \u2014 a bundled launch.';
+  if(o.label==='bundled')return S+' looks like a coordinated launch.';
+  if(o.label==='caution')return S+': no dealbreakers, but '+(o.why||'some checks are unverified').toLowerCase()+'.';
+  if(o.label==='ok')return S+' passed the sell test, has no owner switches, and ownership is spread out.';
+  return S+' couldn\u2019t be fully checked.';
+}
+
 /* one vocabulary everywhere */
 const LABEL_TEXT={avoid:'Avoid',bundled:'Bundled',caution:'Caution',ok:'Looks OK',unknown:'No data',pend:'checking'};
 const LABEL_SEV ={avoid:'fail',  bundled:'fail',  caution:'warn',  ok:'pass',      unknown:'unknown',pend:'unknown'};
@@ -624,7 +712,7 @@ async function modHolders(addr,dec){
   const bubbles=rows.slice(0,22).map(r=>({addr:r.addr,pct:pct(r.val),
     kind:r.addr===pool?'pool':(creator&&r.addr===creator)?'creator':sys.has(r.addr)?'burn':r.isC?'contract':pct(r.val)>=5?'whale':'holder'}));
   const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':'pass';
-  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,bubbles,edges,dec,bundle,conc:{top1:(wallets.length?pct(wallets[0].val):0),top10:(function(){let c=0n;for(let i=0;i<10&&i<wallets.length;i++)c+=wallets[i].val;return pct(c);})(),equalCluster:0},findings:f};
+  return{id:'holders',title:'Who holds it?',status,pool,sampleHolder,bubbles,edges,dec,bundle,holderCount:count,conc:{top1:(wallets.length?pct(wallets[0].val):0),top10:(function(){let c=0n;for(let i=0;i<10&&i<wallets.length;i++)c+=wallets[i].val;return pct(c);})(),equalCluster:0},findings:f};
 }
 
 /* ===== 3. LIQUIDITY ===== */
@@ -799,21 +887,9 @@ async function getLogsChunk(params,from,to,depth){
 }
 
 /* Find the biggest range the endpoint will actually serve, once per session. */
-/* One attempt is enough to learn whether this endpoint serves chain-wide logs.
-   Cached (0 is a valid answer, so test against null). */
-async function probeLogRange(params,latest){
-  if(LOG_RANGE!==null)return LOG_RANGE;
-  const from=Math.max(0,latest-MAX_RANGE+1);
-  try{
-    await rpc('eth_getLogs',[Object.assign({},params,{
-      fromBlock:'0x'+from.toString(16),toBlock:'0x'+latest.toString(16)})]);
-    LOG_RANGE=MAX_RANGE;
-  }catch(e){
-    if(!LOG_ERR)LOG_ERR=String(e.message||e);
-    LOG_RANGE=0;
-  }
-  return LOG_RANGE;
-}
+/* This chain's RPC does not serve eth_getLogs at all (confirmed 400 on every
+   shape). We never ask. Token discovery + charts use Blockscout instead. */
+const RPC_SERVES_LOGS=false;
 async function getLogsAdaptive(params,from,to){
   if(to<from)return [];
   const range=LOG_RANGE||MAX_RANGE;
@@ -853,52 +929,87 @@ async function fetchTokenPage(query){
     ts:t.exchange_rate_updated_at||t.created_at||null
   })).filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr));
 }
-async function discoverViaExplorer(){
-  /* Blockscout supports sort/order; use it so the two tabs actually differ.
-     holders desc = trending; recency = newest (fallback to circulating vol). */
-  let trending=[],newest=[];
-  try{trending=await fetchTokenPage('&sort=holders_count&order=desc');}catch(e){}
-  try{newest=await fetchTokenPage('&sort=circulating_market_cap&order=asc');}catch(e){}
-  /* if the sort params aren't honored, fall back and force a real difference:
-     trending = most holders, newest = REVERSE of that list (least-established) */
-  if(!trending.length){const base=await fetchTokenPage('');trending=base.slice().sort((a,b)=>b.holders-a.holders);}
-  if(!newest.length||sameList(newest,trending)){
-    const base=trending.length?trending:await fetchTokenPage('');
-    newest=base.slice().sort((a,b)=>a.holders-b.holders); /* fewest holders \u2248 newest */
+/* Newly-deployed tokens = first Transfer from 0x0 (the mint).
+   Blockscout exposes an Etherscan-compatible logs API; the RPC does not. */
+async function mintedTokens(){
+  let latest=null;
+  try{latest=parseInt(await rpc('eth_blockNumber',[]),16);}catch(e){}
+  if(!latest)return null;
+  for(const span of [120000,40000,10000]){
+    const from=Math.max(0,latest-span);
+    try{
+      const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
+        +'&topic0='+TRANSFER_TOPIC+'&topic1='+ZERO_TOPIC+'&topic0_1_opr=and',1);
+      if(!j||j.status!=='1'||!Array.isArray(j.result)||!j.result.length)continue;
+      const first={},count={};
+      for(const l of j.result){
+        const a=(l.address||'').toLowerCase();
+        const blk=parseInt(l.blockNumber,16);
+        if(!/^0x[0-9a-f]{40}$/.test(a)||!isFinite(blk))continue;
+        count[a]=(count[a]||0)+1;
+        if(!(a in first)||blk<first[a])first[a]=blk;
+      }
+      const rows=Object.entries(first).sort((x,y)=>y[1]-x[1])
+        .map(([addr,block])=>({addr,firstBlock:block,mints:count[addr]}));
+      if(rows.length)return rows;
+    }catch(e){}
   }
-  return{newest:newest.slice(0,MAX_TOKENS),trending:trending.slice(0,MAX_TOKENS),source:'explorer',scanned:null};
+  return null;
 }
-function sameList(a,b){
-  if(!a.length||!b.length)return false;
-  const n=Math.min(a.length,b.length,MAX_TOKENS);
-  let same=0;for(let i=0;i<n;i++)if(a[i].addr===b[i].addr)same++;
-  return same/n>0.8;   /* >80% overlap in the same order = effectively identical */
+
+/* One DexScreener call for up to 30 tokens -> real 24h volume for ranking. */
+async function marketBatch(addrs){
+  const out={};
+  if(!addrs.length)return out;
+  try{
+    const r=await fetch(DEXSCREEN+addrs.slice(0,30).join(','));
+    if(!r.ok)return out;
+    const j=await r.json();
+    for(const p of (j.pairs||[])){
+      const cid=String(p.chainId||'').toLowerCase();
+      if(!(cid==='robinhood'||cid==='robinhoodchain'||cid==='robinhood-chain'||cid==='4663'))continue;
+      const base=((p.baseToken&&p.baseToken.address)||'').toLowerCase();
+      if(!base)continue;
+      const liq=(p.liquidity&&p.liquidity.usd)||0;
+      if(!out[base]||liq>out[base].liq)
+        out[base]={price:parseFloat(p.priceUsd)||null,mcap:p.marketCap||p.fdv||null,
+          vol:(p.volume&&p.volume.h24)||0,liq};
+    }
+  }catch(e){}
+  return out;
 }
+
 async function discoverTokens(){
   const hit=cacheGet('discover');if(hit)return hit;
-  const latest=parseInt(await rpc('eth_blockNumber',[]),16);
-  const filter={topics:[TOPIC_TRANSFER]};
-  const range=(LOG_RANGE!==null)?LOG_RANGE:await probeLogRange(filter,latest);
-  let out;
-  if(range>=500){
-    const from=Math.max(0,latest-SCAN_BLOCKS);
-    const logs=await getLogsAdaptive(filter,from,latest);
-    if(logs.length){
-      const firstMint={},activity={},lastBlock={};
-      for(const l of logs){
-        const a=(l.address||'').toLowerCase();if(!a)continue;
-        activity[a]=(activity[a]||0)+1;
-        const blk=parseInt(l.blockNumber,16);
-        if(!(a in lastBlock)||blk>lastBlock[a])lastBlock[a]=blk;
-        if(l.topics&&l.topics[1]===ZERO_TOPIC){if(!(a in firstMint)||blk<firstMint[a])firstMint[a]=blk;}
-      }
-      const newest=Object.entries(firstMint).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,b])=>({addr:a,block:b,txs:activity[a]||0}));
-      const trending=Object.entries(activity).sort((a,b)=>b[1]-a[1]).slice(0,MAX_TOKENS).map(([a,n])=>({addr:a,txs:n,block:lastBlock[a]}));
-      if(newest.length||trending.length)
-        out={newest,trending,source:'logs',scanned:{from,to:latest,logs:logs.length}};
-    }
+
+  /* candidate pool from the explorer's token index */
+  let rows=[];
+  try{rows=await fetchTokenPage('');}catch(e){}
+  const candidates=rows.slice(0,30).map(r=>r.addr);
+
+  /* TRENDING: rank the candidate pool by real 24h volume */
+  const mkts=await marketBatch(candidates);
+  const withVol=rows.map(r=>Object.assign({},r,{vol:(mkts[r.addr]&&mkts[r.addr].vol)||0,
+    mkt:mkts[r.addr]||null}));
+  let trending=withVol.filter(r=>r.vol>0).sort((a,b)=>b.vol-a.vol);
+  let trendingBy='24h volume';
+  if(!trending.length){trending=withVol.slice().sort((a,b)=>b.holders-a.holders);trendingBy='holders';}
+
+  /* NEWEST: real deployment order from mint logs */
+  let newest=[],newestBy='explorer order';
+  const mints=await mintedTokens();
+  if(mints&&mints.length){
+    const known=new Map(withVol.map(r=>[r.addr,r]));
+    newest=mints.map(m=>Object.assign({},known.get(m.addr)||{addr:m.addr},
+      {firstBlock:m.firstBlock,mkt:(mkts[m.addr]||null)}));
+    newestBy='first mint on-chain';
+  }else{
+    newest=withVol.slice().sort((a,b)=>a.holders-b.holders);   /* least-established */
+    newestBy='fewest holders (deployment time unavailable)';
   }
-  if(!out)out=await discoverViaExplorer();
+
+  const out={newest:newest.slice(0,MAX_TOKENS),trending:trending.slice(0,MAX_TOKENS),
+    source:'explorer',newestBy,trendingBy,scanned:null};
   cacheSet('discover',out);
   return out;
 }
@@ -1076,12 +1187,15 @@ function renderModules(mods){
   });
   wireBubbles();
 }
-function shareUrl(addr,sym,big){
+function shareUrl(addr,sym,big,ov){
   const page=location.origin+location.pathname+'?token='+addr;
-  const text=(sym?'$'+sym:'This token')+' on Robinhood Chain: '+big+'\n\nScanned with Robinhood Chain Scanner (unofficial):';
+  const line=ov?overviewShort(ov):((sym?'$'+sym:'This token')+': '+big);
+  /* keep well inside the tweet limit; the URL + hashtag eat ~40 chars */
+  const body=line.length>200?line.slice(0,197)+'\u2026':line;
+  const text=body+'\n\nScanned with RobinScan \u2014 #robinscan';
   return 'https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(page);
 }
-function renderVerdict(mods,addr,sym,shared){
+function renderVerdict(mods,addr,sym,shared,ov){
   /* `shared` is the verdictFrom() result computed from the same signals the
      terminal chip uses. When present it drives the banner, guaranteeing the
      list and the report can never disagree. */
@@ -1103,7 +1217,7 @@ function renderVerdict(mods,addr,sym,shared){
     else{cls='ok';status='pass';big='Looks okay';sub='The checks that ran found no traps. Still not a guarantee.';}
   }
   $('banner').className='banner '+cls;$('vbig').textContent=big;$('vsub').textContent=sub;
-  let acts='<a class="act" href="'+shareUrl(addr,sym,big)+'" target="_blank" rel="noopener">Share on X</a>';
+  let acts='<a class="act" href="'+shareUrl(addr,sym,big,ov)+'" target="_blank" rel="noopener">Share on X</a>';
   if(status==='pass')acts='<a class="act buy" href="'+UNISWAP+addr+'" target="_blank" rel="noopener nofollow">Trade on Uniswap \u2197</a>'+acts;
   $('actions').innerHTML=acts;
   $('buywarn').textContent = status==='pass'
@@ -1148,7 +1262,7 @@ async function run(){
 
     /* One verdict, computed from the same signals the terminal chip uses,
        so the list and this report can never disagree. */
-    let shared=null;
+    let shared=null,sharedFlags=null,sharedSim=null,sharedLp=null;
     try{
       const rt=strip(await getCode(addr)),has=s=>rt.includes(s);
       const flags={hasCode:rt.length>0,mint:has(SEL.mint),
@@ -1163,12 +1277,29 @@ async function run(){
       const lpNA=mL.findings.some(f=>/N\/A on this pool/i.test(f.a||''));
       const lpF=mL.findings.find(f=>/burned or locked/i.test(f.q||''));
       const lp=lpNA?{kind:'v3v4'}:{kind:'v2',securedPct:lpF?parseFloat(lpF.a):null};
+      sharedFlags=flags;sharedSim=sim;sharedLp=lp;
       shared=verdictFrom({flags,conc:mH.conc,sim,lp,bundle:mH.bundle});
     }catch(e){shared=null;}
 
     await renderTokenCard(addr,name,sym);
-    const res=renderVerdict([mS,mH,mL],addr,sym,shared);
+
+    /* overview from the exact signals the verdict used */
+    const ov={sym,name,label:(shared&&shared.label)||'unknown',why:(shared&&shared.why)||'',
+      conc:mH.conc,sim:sharedSim,lp:sharedLp,bundle:mH.bundle,mkt,holderCount:mH.holderCount,flags:sharedFlags};
+    const text=buildOverview(ov);
+    $('aiBody').textContent=text;
+    $('aiCopy').onclick=()=>{try{navigator.clipboard.writeText(text);$('aiCopy').textContent='Copied \u2713';
+      setTimeout(()=>{$('aiCopy').textContent='Copy';},1500);}catch(e){}};
+
+    const res=renderVerdict([mS,mH,mL],addr,sym,shared,ov);
     pushRecent(addr,name,sym,res.status,res.label);
+
+    /* interactive chart for the scanned token */
+    (async()=>{
+      const box=$('scanChart');
+      try{const s=await priceSeries({addr,pool:mH.pool,dec});renderChart(box,s);}
+      catch(e){box.innerHTML='<div class="cload">Couldn\u2019t load chart: '+esc(String(e.message||e))+'</div>';}
+    })();
     log('\u2713 done','ok');
   }catch(e){showErr('<b>Something went wrong:</b> '+esc(String(e.message||e)));log('\u2717 '+String(e.message||e),'er');}
   finally{btn.disabled=false;btn.textContent='Check this token';}
@@ -1293,10 +1424,7 @@ async function loadTerminal(force){
   try{
     if(force)delete _cache['discover'];
     const d=await discoverTokens();
-    head.textContent = (d.source==='logs')
-      ? ('scanned '+d.scanned.logs.toLocaleString()+' transfers')
-      : ('from explorer index'+(LOG_ERR?' \u00b7 chain-wide logs unavailable':''));
-    if(LOG_ERR)head.title=LOG_ERR;
+    head.textContent = (TERM_TAB==='newest'?'newest \u00b7 '+(d.newestBy||''):'trending \u00b7 '+(d.trendingBy||''));
     const raw=(TERM_TAB==='newest'?d.newest:d.trending).slice(0,MAX_TOKENS);
     const toks=await enrich(raw.map(x=>Object.assign({},x)));
     if(!toks.length){
