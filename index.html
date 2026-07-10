@@ -490,11 +490,11 @@ async function fetchMarket(addr,totalSupply,dec){
    never disagree again.
    =================================================================== */
 async function bundleCheck(tokenAddr, poolAddr, maxPages){
-  const skip=new Set([ZERO,(poolAddr||'').toLowerCase(),tokenAddr.toLowerCase()]);
-  /* NOTE: this endpoint takes NO `type` param \u2014 sending one returns 422. */
+  const pool=(poolAddr||'').toLowerCase();
+  const skip=new Set([ZERO,pool,tokenAddr.toLowerCase()]);
   let url='/api/v2/tokens/'+tokenAddr+'/transfers';
   const items=[];let complete=false;
-  const pages=maxPages||3;
+  const pages=maxPages||2;
   for(let page=0;page<pages;page++){
     let j=null;
     try{j=await scout(url,1);}catch(e){break;}
@@ -502,7 +502,6 @@ async function bundleCheck(tokenAddr, poolAddr, maxPages){
     items.push.apply(items,j.items);
     const np=j.next_page_params;
     if(!np){complete=true;break;}
-    /* drop null/undefined params \u2014 they serialise to the string "null" and 422 */
     const qs=Object.keys(np).filter(k=>np[k]!==null&&np[k]!==undefined)
       .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
     if(!qs){complete=true;break;}
@@ -510,18 +509,24 @@ async function bundleCheck(tokenAddr, poolAddr, maxPages){
   }
   if(!items.length)return{maxRecipients:0,maxFunder:0,complete:false,firstIn:{}};
 
-  const byTx={},firstIn={};
+  /* Group by (tx, sender). A router filling many buyers in one transaction
+     sends FROM the pool \u2014 that is normal trading, not a bundle. A bundled
+     launch is many recipients funded by one NON-pool sender in one tx. */
+  const byTxFrom={},firstIn={};
   for(const t of items){
     const to=((t.to&&t.to.hash)||'').toLowerCase();
     const from=((t.from&&t.from.hash)||'').toLowerCase();
     const tx=(t.transaction_hash||t.tx_hash||'').toLowerCase();
     const blk=Number(t.block_number);
     if(!to||skip.has(to))continue;
-    if(tx){(byTx[tx]=byTx[tx]||new Set()).add(to);}
+    if(from===pool)continue;                      /* buys from the pool: ignore */
+    if(tx&&from){const k=tx+'|'+from;(byTxFrom[k]=byTxFrom[k]||new Set()).add(to);}
     if(!(to in firstIn)||blk<firstIn[to].block)firstIn[to]={block:blk,tx,funder:from};
   }
   let maxRecipients=0,bundleTx=null;
-  for(const tx in byTx){if(byTx[tx].size>maxRecipients){maxRecipients=byTx[tx].size;bundleTx=tx;}}
+  for(const k in byTxFrom){
+    if(byTxFrom[k].size>maxRecipients){maxRecipients=byTxFrom[k].size;bundleTx=k.split('|')[0];}
+  }
   const byFunder={};
   for(const a in firstIn){const f=firstIn[a].funder;if(f&&!skip.has(f))(byFunder[f]=byFunder[f]||[]).push(a);}
   let maxFunder=0,funderAddr=null;
@@ -540,7 +545,7 @@ function verdictFrom({flags,conc,sim,lp,bundle}){
   if(!conc)return{label:'unknown',why:'No holder data yet \u2014 treat as high risk'};
   if(conc.top1>=30||conc.top10>=85)
     return{label:'avoid',why:'Extreme concentration \u2014 top wallet holds '+conc.top1.toFixed(1)+'%'};
-  if(lp&&lp.kind==='v2'&&lp.securedPct!=null&&lp.securedPct<50)
+  if(lp&&lp.kind==='v2'&&lp.securedPct!=null&&isFinite(lp.securedPct)&&lp.securedPct<50)
     return{label:'avoid',why:'Only '+lp.securedPct.toFixed(0)+'% of LP burned/locked \u2014 team can pull liquidity'};
   if(bundle&&bundle.maxRecipients>=3)
     return{label:'bundled',why:bundle.maxRecipients+' wallets received tokens in one transaction \u2014 bundled launch'};
@@ -598,10 +603,10 @@ function buildOverview(o){
     else b.push('Ownership looks spread out: largest wallet '+t1.toFixed(2)+'%, top ten '+t10.toFixed(1)+'%'+(o.holderCount?', across '+o.holderCount.toLocaleString()+' holders':'')+'.');
   }
 
-  if(o.lp&&o.lp.kind==='v2'&&o.lp.securedPct!=null){
+  if(o.lp&&o.lp.kind==='v2'&&o.lp.securedPct!=null&&isFinite(o.lp.securedPct)){
     if(o.lp.securedPct>=95)b.push('Liquidity is effectively locked: '+o.lp.securedPct.toFixed(0)+'% of the LP is burned or held in a locker.');
     else if(o.lp.securedPct<50)b.push('Only '+o.lp.securedPct.toFixed(0)+'% of the LP is burned or locked, so the team can withdraw the liquidity at will.');
-    else b.push(o.lp.securedPct.toFixed(0)+'% of the LP is secured; the rest can still be pulled.');
+    else if(isFinite(o.lp.securedPct))b.push(o.lp.securedPct.toFixed(0)+'% of the LP is secured; the rest can still be pulled.');
   }else if(o.lp&&o.lp.kind==='v3v4'){
     b.push('This pool holds liquidity as an NFT position rather than a burnable LP token, so \u201cLP burned\u201d doesn\u2019t apply \u2014 judge it on depth and who owns the position.');
   }
@@ -828,6 +833,9 @@ async function renderTokenCard(addr,name,sym,createdAt){
 /* ============================ TERMINAL ============================ */
 const TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const TOPIC_SYNC='0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';
+const TOPIC_POOL_CREATED='0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118';
+const TOPIC_PAIR_CREATED='0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9';
+const SEL_FACTORY='c45a0155';
 const TOPIC_V3SWAP='0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67';
 const Q96=2n**96n;
 const ZERO_TOPIC='0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -956,10 +964,6 @@ function ageBadge(ms){
   return Math.floor(s/86400)+'d';
 }
 
-/* DexScreener has no "newest pairs by chain" API endpoint, but its search
-   endpoint returns pairs with pairCreatedAt. On Robinhood Chain every token
-   pairs against WETH, so a few WETH-oriented searches surface the fresh pairs.
-   We dedupe by token and sort by real creation time. */
 const RH_CHAINS=new Set(['robinhood','robinhoodchain','robinhood-chain','4663']);
 async function dexSearch(q){
   try{
@@ -969,47 +973,145 @@ async function dexSearch(q){
     return (j.pairs||[]).filter(p=>RH_CHAINS.has(String(p.chainId||'').toLowerCase()));
   }catch(e){return [];}
 }
-function pairRow(p){
-  return {addr:((p.baseToken&&p.baseToken.address)||'').toLowerCase(),
-    sym:(p.baseToken&&p.baseToken.symbol)||'',name:(p.baseToken&&p.baseToken.name)||'',
-    pair:p.pairAddress||null, createdAt:p.pairCreatedAt||null,
-    vol:(p.volume&&p.volume.h24)||0, mcap:p.marketCap||p.fdv||null,
-    liq:(p.liquidity&&p.liquidity.usd)||null, price:parseFloat(p.priceUsd)||null,
-    ver:(p.labels&&p.labels[0])||null};
+
+/* One DexScreener call for up to 30 tokens. */
+async function marketBatch(addrs){
+  const out={};
+  if(!addrs.length)return out;
+  try{
+    const r=await fetch(DEXSCREEN+addrs.slice(0,30).join(','));
+    if(!r.ok)return out;
+    const j=await r.json();
+    for(const p of (j.pairs||[])){
+      if(!RH_CHAINS.has(String(p.chainId||'').toLowerCase()))continue;
+      const base=((p.baseToken&&p.baseToken.address)||'').toLowerCase();
+      if(!base)continue;
+      const liq=(p.liquidity&&p.liquidity.usd)||0;
+      if(!out[base]||liq>out[base].liq)
+        out[base]={price:parseFloat(p.priceUsd)||null,mcap:p.marketCap||p.fdv||null,
+          vol:(p.volume&&p.volume.h24)||0,liq,pairAddress:p.pairAddress||null,
+          pairCreatedAt:p.pairCreatedAt||null};
+    }
+  }catch(e){}
+  return out;
 }
-async function discoverTokens(){
-  const hit=cacheGet('discover');if(hit)return hit;
 
-  /* widen coverage: WETH-quoted pairs + a couple of chain-typical terms */
-  const batches=await Promise.all([dexSearch('WETH'),dexSearch('robinhood'),dexSearch('hood')]);
-  const seen=new Map();
-  for(const list of batches) for(const p of list){
-    const row=pairRow(p);
-    if(!/^0x[0-9a-f]{40}$/.test(row.addr))continue;
-    const prev=seen.get(row.addr);
-    /* keep the deepest-liquidity pair per token */
-    if(!prev||((row.liq||0)>(prev.liq||0)))seen.set(row.addr,row);
-  }
-  let rows=[...seen.values()];
-
-  /* explorer top-up so the list isn't tiny if search returns little */
-  if(rows.length<MAX_TOKENS){
+/* The DEX factory address, discovered once by asking a known pool who made it. */
+async function findFactory(){
+  try{const c=localStorage.getItem('rhscan.factory');if(c)return c;}catch(e){}
+  const pairs=await dexSearch('WETH');
+  for(const p of pairs.slice(0,4)){
+    if(!p.pairAddress)continue;
     try{
-      const ex=await fetchTokenPage('');
-      const have=new Set(rows.map(r=>r.addr));
-      for(const e of ex){if(!have.has(e.addr)){rows.push({addr:e.addr,sym:e.sym,name:e.name,
-        createdAt:null,vol:0,mcap:null,liq:null,ver:null});have.add(e.addr);}}
+      const f=addrWord(await call(p.pairAddress,SEL_FACTORY));
+      if(f&&f!==ZERO){try{localStorage.setItem('rhscan.factory',f);}catch(e){}return f;}
     }catch(e){}
   }
+  return null;
+}
 
-  const dated=rows.filter(r=>r.createdAt);
-  const newest=(dated.length?dated:rows).slice()
-    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,MAX_TOKENS);
-  const trending=rows.slice().sort((a,b)=>(b.vol||0)-(a.vol||0)).slice(0,MAX_TOKENS);
+/* Real deploy times: read the block timestamp for each creation block. */
+async function blockTimes(blocks){
+  const uniq=[...new Set(blocks)].slice(0,20);
+  if(!uniq.length)return {};
+  const res=await rpcBatch(uniq.map(b=>({method:'eth_getBlockByNumber',
+    params:['0x'+Number(b).toString(16),false]})));
+  const out={};
+  uniq.forEach((b,i)=>{const r=res[i];if(r&&r.timestamp)out[b]=parseInt(r.timestamp,16)*1000;});
+  return out;
+}
 
-  const out={newest,trending,source:'dexscreener',
-    newestBy:dated.length?'newest pairs (DexScreener)':'explorer order',
-    trendingBy:'24h volume',scanned:null};
+/* NEWEST: the factory tells us exactly which pools were created, newest first.
+   DexScreener's search endpoint ranks by liquidity, so brand-new pairs never
+   appear there \u2014 this is why the old "newest" tab lagged by hours. */
+async function newestPools(){
+  const factory=await findFactory();
+  if(!factory)return null;
+  const items=await scoutLogs(factory,2);
+  if(!items.length)return null;
+
+  const created=[];
+  for(const l of items){
+    const t=(l.topics||[]);
+    const t0=(t[0]||'').toLowerCase();
+    if(t0!==TOPIC_POOL_CREATED&&t0!==TOPIC_PAIR_CREATED)continue;
+    if(!t[1]||!t[2])continue;
+    created.push({token0:addrWord(t[1]),token1:addrWord(t[2]),
+      block:Number(l.block_number!=null?l.block_number:l.blockNumber)});
+  }
+  if(!created.length)return null;
+
+  /* whichever token appears in nearly every pool is the quote asset (WETH) */
+  const freq={};
+  created.forEach(c=>{freq[c.token0]=(freq[c.token0]||0)+1;freq[c.token1]=(freq[c.token1]||0)+1;});
+  const quote=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
+
+  const seen=new Set(),rows=[];
+  created.sort((a,b)=>b.block-a.block);
+  for(const c of created){
+    const tok=c.token0===quote?c.token1:(c.token1===quote?c.token0:null);
+    if(!tok||seen.has(tok))continue;
+    seen.add(tok);
+    rows.push({addr:tok,block:c.block});
+    if(rows.length>=MAX_TOKENS)break;
+  }
+  if(!rows.length)return null;
+
+  /* real timestamps + metadata + market in a few batched calls */
+  const times=await blockTimes(rows.map(r=>r.block));
+  const meta=await rpcBatch(rows.flatMap(r=>[
+    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.name},'latest']},
+    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.symbol},'latest']},
+    {method:'eth_call',params:[{to:r.addr,data:'0x'+READ.decimals},'latest']}
+  ]));
+  const mkts=await marketBatch(rows.map(r=>r.addr));
+  return rows.map((r,i)=>{
+    const m=mkts[r.addr]||null;
+    return{addr:r.addr,
+      name:meta[i*3]?decodeString(meta[i*3]):'',
+      sym:meta[i*3+1]?decodeString(meta[i*3+1]):'',
+      dec:meta[i*3+2]?(Number(toBig(meta[i*3+2]))||18):18,
+      createdAt:(m&&m.pairCreatedAt)||times[r.block]||null,
+      block:r.block,mkt:m,
+      mcap:m&&m.mcap,vol:m&&m.vol,liq:m&&m.liq,price:m&&m.price,pair:m&&m.pairAddress};
+  });
+}
+
+/* TRENDING: established tokens from the explorer, ranked by real 24h volume. */
+async function trendingTokens(){
+  let rows=[];
+  try{rows=await fetchTokenPage('');}catch(e){}
+  if(!rows.length)return [];
+  const mkts=await marketBatch(rows.slice(0,30).map(r=>r.addr));
+  return rows.map(r=>{
+    const m=mkts[r.addr]||null;
+    return Object.assign({},r,{mkt:m,vol:(m&&m.vol)||0,mcap:m&&m.mcap,liq:m&&m.liq,
+      price:m&&m.price,pair:m&&m.pairAddress,createdAt:(m&&m.pairCreatedAt)||null});
+  }).sort((a,b)=>b.vol-a.vol).slice(0,MAX_TOKENS);
+}
+
+async function discoverTokens(){
+  const hit=cacheGet('discover');if(hit)return hit;
+  let newest=null,newestBy='';
+  try{newest=await newestPools();}catch(e){}
+  if(newest&&newest.length){newestBy='new pools, newest first';}
+  else{
+    /* fallback: dexscreener search sorted by creation (lags, and we say so) */
+    const p=await dexSearch('WETH');
+    newest=p.map(x=>({addr:((x.baseToken&&x.baseToken.address)||'').toLowerCase(),
+      sym:(x.baseToken&&x.baseToken.symbol)||'',name:(x.baseToken&&x.baseToken.name)||'',
+      createdAt:x.pairCreatedAt||null,mkt:null,vol:(x.volume&&x.volume.h24)||0,
+      mcap:x.marketCap||x.fdv||null,liq:(x.liquidity&&x.liquidity.usd)||null,
+      price:parseFloat(x.priceUsd)||null,pair:x.pairAddress}))
+      .filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr))
+      .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,MAX_TOKENS);
+    newestBy='DexScreener search (may lag)';
+  }
+
+  let trending=[];
+  try{trending=await trendingTokens();}catch(e){}
+
+  const out={newest,trending,source:'mixed',newestBy,trendingBy:'24h volume',scanned:null};
   cacheSet('discover',out);
   return out;
 }
@@ -1092,7 +1194,7 @@ async function quickLabel(t){
 
   /* THE MISSING CHECK: same-transaction bundle, identical to the full scan */
   let bundle=null;
-  try{bundle=await bundleCheck(t.addr,pool,3);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
+  try{bundle=await bundleCheck(t.addr,pool,2);}catch(e){bundle={maxRecipients:0,maxFunder:0,complete:false};}
   t.bundle=bundle;
 
   Object.assign(t,verdictFrom({flags,conc,sim,bundle}));
@@ -1325,6 +1427,7 @@ $('scan').addEventListener('click',run);
 $('addr').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
 
 
+
 /* ===== chart ===== */
 function fmtPrice(p){if(!isFinite(p)||p<=0)return '\u2014';
   if(p>=1)return p.toFixed(4);
@@ -1464,7 +1567,7 @@ async function loadTerminal(force){
         const fresh=tRow(t);els[k].replaceWith(fresh);els[k]=fresh;
       }
     }
-    await Promise.all([worker(),worker()]);
+    await worker();   /* one worker: the explorer 500s under parallel load */
     termCacheSet(TERM_TAB,toks.map(serTok));
   }catch(e){
     const down=SCOUT_DOWN||/unavailable|Failed to fetch/i.test(String(e.message||''));
