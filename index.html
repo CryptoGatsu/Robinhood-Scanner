@@ -1033,30 +1033,9 @@ async function newestPools(){
   const factory=await findFactory();
   if(!factory)return null;
 
-  let logs=null;
-  let latest=null;
-  try{latest=parseInt(await rpc('eth_blockNumber',[]),16);}catch(e){}
-
-  /* filtered log query: one address, one topic \u2014 far lighter than pulling
-     every log the factory ever emitted */
-  if(latest){
-    for(const span of [60000,20000,5000]){
-      const from=Math.max(0,latest-span);
-      try{
-        const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
-          +'&address='+factory+'&topic0='+TOPIC_POOL_CREATED,1);
-        if(j&&j.status==='1'&&Array.isArray(j.result)&&j.result.length){
-          logs=j.result.map(l=>({topics:l.topics,block_number:parseInt(l.blockNumber,16)}));
-          break;
-        }
-      }catch(e){}
-    }
-  }
-  /* fallback: the v2 address-logs endpoint, newest first */
-  if(!logs){
-    try{const items=await scoutLogs(factory,1);if(items.length)logs=items;}catch(e){}
-  }
-  if(!logs||!logs.length)return null;
+  let logs=await logsFiltered(factory,TOPIC_POOL_CREATED,[20000,5000,1500]);
+  if(!logs||!logs.length)logs=await logsFiltered(factory,TOPIC_PAIR_CREATED,[20000,5000]);
+  if(!logs||!logs.length)return null;   /* no heavy pagination fallback: it 500s */
 
   const created=[];
   for(const l of logs){
@@ -1109,16 +1088,42 @@ async function newestPools(){
 }
 
 /* TRENDING: established tokens from the explorer, ranked by real 24h volume. */
+/* Trending, the way DexScreener ranks it: recent momentum, not lifetime volume.
+   We prefer 1-hour volume, falling back to 6h/24h normalised per hour. */
+function trendScore(p){
+  const v=p.volume||{};
+  if(v.h1>0)return v.h1;
+  if(v.h6>0)return v.h6/6;
+  if(v.h24>0)return v.h24/24;
+  return 0;
+}
 async function trendingTokens(){
-  let rows=[];
-  try{rows=await fetchTokenPage('');}catch(e){}
-  if(!rows.length)return [];
-  const mkts=await marketBatch(rows.slice(0,30).map(r=>r.addr));
-  return rows.map(r=>{
-    const m=mkts[r.addr]||null;
-    return Object.assign({},r,{mkt:m,vol:(m&&m.vol)||0,mcap:m&&m.mcap,liq:m&&m.liq,
-      price:m&&m.price,pair:m&&m.pairAddress,createdAt:(m&&m.pairCreatedAt)||null});
-  }).sort((a,b)=>b.vol-a.vol).slice(0,MAX_TOKENS);
+  /* search caps ~30 results, so union several queries to widen the pool */
+  const lists=await Promise.all([
+    dexSearch('WETH'),dexSearch('hood'),dexSearch('cat'),dexSearch('robinhood')
+  ]);
+  const by=new Map();
+  for(const l of lists)for(const p of l){
+    const a=((p.baseToken&&p.baseToken.address)||'').toLowerCase();
+    if(!/^0x[0-9a-f]{40}$/.test(a))continue;
+    const prev=by.get(a);
+    const liq=(p.liquidity&&p.liquidity.usd)||0;
+    if(!prev||liq>((prev.liquidity&&prev.liquidity.usd)||0))by.set(a,p);
+  }
+  const rows=[...by.values()]
+    .map(p=>({addr:((p.baseToken&&p.baseToken.address)||'').toLowerCase(),
+      sym:(p.baseToken&&p.baseToken.symbol)||'',name:(p.baseToken&&p.baseToken.name)||'',
+      createdAt:p.pairCreatedAt||null,pair:p.pairAddress||null,
+      score:trendScore(p),
+      vol:(p.volume&&p.volume.h24)||0,volH1:(p.volume&&p.volume.h1)||0,
+      chg:(p.priceChange&&p.priceChange.h1)||0,
+      mcap:p.marketCap||p.fdv||null,liq:(p.liquidity&&p.liquidity.usd)||null,
+      price:parseFloat(p.priceUsd)||null}))
+    .filter(r=>r.score>0)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,MAX_TOKENS);
+  rows.forEach(r=>{r.mkt={mcap:r.mcap,vol:r.vol,liq:r.liq,price:r.price,pairAddress:r.pair};});
+  return rows;
 }
 
 async function discoverTokens(){
@@ -1136,13 +1141,13 @@ async function discoverTokens(){
       price:parseFloat(x.priceUsd)||null,pair:x.pairAddress}))
       .filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr))
       .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,MAX_TOKENS);
-    newestBy='DexScreener search (may lag)';
+    newestBy='DexScreener search \u2014 factory unreachable';
   }
 
   let trending=[];
   try{trending=await trendingTokens();}catch(e){}
 
-  const out={newest,trending,source:'mixed',newestBy,trendingBy:'24h volume',scanned:null};
+  const out={newest,trending,source:'mixed',newestBy,trendingBy:'1h volume (momentum)',scanned:null};
   cacheSet('discover',out);
   return out;
 }
@@ -1241,17 +1246,41 @@ async function marketFor(t){
 /* price series from pool Sync events; falls back to transfer activity */
 /* Pull logs from the explorer, not the RPC. This endpoint rejects eth_getLogs,
    but Blockscout indexes logs and serves them over plain REST. */
+/* One filtered request beats paginating every log an address ever emitted.
+   A busy v3 pool has tens of thousands of logs; the unfiltered v2 endpoint
+   500s on it. This asks for a single topic over a bounded block range. */
+async function logsFiltered(address,topic0,spans){
+  let latest=null;
+  try{latest=parseInt(await rpc('eth_blockNumber',[]),16);}catch(e){}
+  if(!latest)return null;
+  for(const span of (spans||[40000,10000,2000])){
+    const from=Math.max(0,latest-span);
+    try{
+      const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
+        +'&address='+address+'&topic0='+topic0,1);
+      if(j&&j.status==='1'&&Array.isArray(j.result)&&j.result.length){
+        return j.result.map(l=>({topics:l.topics,data:l.data,
+          block_number:parseInt(l.blockNumber,16)}));
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+/* last-resort: a single page of the v2 address-logs endpoint */
 async function scoutLogs(address,maxPages){
   let url='/api/v2/addresses/'+address+'/logs';
   const out=[];
-  for(let page=0;page<(maxPages||3);page++){
+  for(let page=0;page<(maxPages||1);page++){
     let j=null;
-    try{j=await scout(url);}catch(e){break;}
+    try{j=await scout(url,1);}catch(e){break;}
     if(!j||!j.items||!j.items.length)break;
     out.push.apply(out,j.items);
     const np=j.next_page_params;
     if(!np)break;
-    const qs=Object.keys(np).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
+    const qs=Object.keys(np).filter(k=>np[k]!==null&&np[k]!==undefined)
+      .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
+    if(!qs)break;
     url='/api/v2/addresses/'+address+'/logs?'+qs;
   }
   return out;
@@ -1268,7 +1297,12 @@ async function priceSeries(token){
   let tokenDec=token.dec,quoteDec=18;
   try{quoteDec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
 
-  const items=await scoutLogs(pool,4);
+  /* try v3 Swap first (this chain is v3), then v2 Sync; one request each */
+  let items=await logsFiltered(pool,TOPIC_V3SWAP);
+  let isV3=!!(items&&items.length);
+  if(!items||!items.length)items=await logsFiltered(pool,TOPIC_SYNC);
+  if(!items||!items.length)items=await scoutLogs(pool,1);
+  if(!items||!items.length)return{kind:'none',reason:'no swaps indexed for this pool yet'};
   let pts=[];
 
   /* v2 path: Sync(reserve0,reserve1) */
@@ -1381,6 +1415,7 @@ async function run(){
   if(!/^0x[0-9a-f]{40}$/.test(addr)){showErr('<b>That doesn\u2019t look like a token address.</b> Paste the full 0x\u2026 address (42 characters).');return;}
   const btn=$('scan');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
+    let codeHex=null;
     log('\u203a connecting\u2026');
     let cid;try{cid=await rpc('eth_chainId',[]);}catch(e){showErr('<b>Can\u2019t reach the blockchain.</b> If you\u2019re viewing this in an in-app preview, that sandbox blocks network requests \u2014 open it in a real browser.');log('\u2717 '+String(e.message||e),'er');btn.disabled=false;btn.textContent='Check this token';return;}
     if(parseInt(cid,16)!==4663){showErr('<b>Wrong network.</b> Endpoint is chain '+parseInt(cid,16)+', not Robinhood Chain (4663).');btn.disabled=false;btn.textContent='Check this token';return;}
@@ -1393,7 +1428,8 @@ async function run(){
     let supply=0n;try{supply=toBig(await call(addr,READ.totalSupply));}catch(e){}
     log('  '+(name||'(no name)')+(sym?' \u00b7 '+sym:''),'ok');
 
-    const mkt=await fetchMarket(addr,supply,dec);
+    const [mkt,_code]=await Promise.all([fetchMarket(addr,supply,dec),getCode(addr).catch(()=>null)]);
+    codeHex=_code;
     $('stMcap').textContent=(mkt&&money(mkt.mcap))||'\u2014';
     $('stVol').textContent=(mkt&&money(mkt.vol))||'\u2014';
     $('stPrice').textContent=(mkt&&money(mkt.price))||'\u2014';
@@ -1402,6 +1438,16 @@ async function run(){
 
     log('\u203a holders, connections & liquidity\u2026');
     const mH=await modHolders(addr,dec);log('  '+(mH.pool?'pool found':'no pool')+', '+(mH.edges||[]).length+' links',mH.status==='unknown'?'er':'ok');
+    /* start the chart as soon as we know the pool; it runs while we scan */
+    let chartJob=null;
+    (function(){
+      const box=$('scanChart');
+      if(!box)return;
+      chartJob=priceSeries({addr,pool:mH.pool,dec,mkt,pairAddress:(mkt&&mkt.pairAddress)||null})
+        .then(s=>renderChart(box,s))
+        .catch(e=>{box.innerHTML='<div class="cload">No chart: '+esc(String(e.message||e))+'</div>';});
+    })();
+
     /* honeypot sim and LP lock both only need mH.pool — run them together */
     log('\u203a live honeypot test + liquidity lock\u2026');
     const [mS,mL]=await Promise.all([
@@ -1414,7 +1460,6 @@ async function run(){
     /* One verdict, computed from the same signals the terminal chip uses,
        so the list and this report can never disagree. */
     let shared=null,sharedFlags=null,sharedSim=null,sharedLp=null,scanCreatedAt=null;
-    let codeHex=null;try{codeHex=await getCode(addr);}catch(e){}
     try{
       const rt=strip(codeHex||await getCode(addr)),has=s=>rt.includes(s);
       const flags={hasCode:rt.length>0,mint:has(SEL.mint),
@@ -1448,13 +1493,8 @@ async function run(){
     const res=renderVerdict([mS,mH,mL],addr,sym,shared,ov);
     pushRecent(addr,name,sym,res.status,res.label);
 
-    /* interactive chart for the scanned token */
-    (async()=>{
-      const box=$('scanChart');
-      if(!box)return;
-      try{const s=await priceSeries({addr,pool:mH.pool,dec,mkt,pairAddress:(mkt&&mkt.pairAddress)||null});renderChart(box,s);}
-      catch(e){box.innerHTML='<div class="cload">Couldn\u2019t load chart: '+esc(String(e.message||e))+'</div>';}
-    })();
+    /* chart kicked off earlier; just await whatever it produced */
+    if(chartJob)chartJob.catch(()=>{});
     log('\u2713 done','ok');
   }catch(e){showErr('<b>Something went wrong:</b> '+esc(String(e.message||e)));log('\u2717 '+String(e.message||e),'er');}
   finally{btn.disabled=false;btn.textContent='Check this token';}
