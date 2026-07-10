@@ -256,6 +256,16 @@
   .tlock-b2{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);
     font-weight:700;font-size:12.5px;padding:9px 17px;border-radius:8px;cursor:pointer;font-family:inherit}
   .tlock-b2:hover{border-color:var(--green-dim);color:var(--green)}
+
+  .safety{display:flex;gap:11px;align-items:flex-start;margin-top:14px;padding:13px 14px;
+    background:linear-gradient(180deg,rgba(0,200,5,.075),rgba(0,200,5,.02));
+    border:1px solid rgba(0,200,5,.32);border-radius:11px;position:relative;overflow:hidden}
+  .safety::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--green)}
+  .safety-ico{width:21px;height:21px;flex:none;color:var(--green);margin-top:1px}
+  .safety-txt{min-width:0}
+  .safety-h{font-size:13px;font-weight:800;color:var(--fg);line-height:1.45;letter-spacing:-.01em}
+  .safety-s{font-size:11.5px;color:var(--fg-faint);line-height:1.55;margin-top:4px}
+  @media(max-width:420px){.safety-h{font-size:12.3px}.safety-s{font-size:11px}}
 </style>
 </head>
 <body>
@@ -280,7 +290,18 @@
   <div class="panel">
     <input id="addr" class="mono" placeholder="0x… paste token address" autocomplete="off" spellcheck="false" />
     <button id="scan" class="btn">Check this token</button>
-    <div class="hint">Reads public blockchain data. Connecting a wallet is optional and read-only — RobinScan never requests a signature, a transaction, or approval.</div>
+    <div class="safety">
+      <svg class="safety-ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2.5 4.5 5.8v5.4c0 4.6 3.2 8.9 7.5 10.3 4.3-1.4 7.5-5.7 7.5-10.3V5.8L12 2.5Z"
+          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        <path d="m8.8 12.1 2.2 2.2 4.2-4.6" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="safety-txt">
+        <div class="safety-h">RobinScan never requests a signature, a transaction, or approval.</div>
+        <div class="safety-s">Reads public blockchain data. Connecting a wallet is optional and read-only — it only checks your $ROBINSCAN balance.</div>
+      </div>
+    </div>
     <div class="gate" id="gstatus"></div>
     <div class="err-box" id="errbox"></div>
   </div>
