@@ -269,6 +269,17 @@
       <div class="stat"><div class="k">Price</div><div class="v" id="stPrice">—</div></div>
     </div>
 
+    <div class="aicard" id="aicard">
+      <div class="ai-h"><span class="ai-badge">Overview</span><span class="ai-sub">generated from this scan</span></div>
+      <p class="ai-body" id="aiBody"></p>
+      <button class="ai-copy" id="aiCopy">Copy</button>
+    </div>
+
+    <div class="chartcard" id="chartcard">
+      <div class="cc-h">Price</div>
+      <div class="chartbox" id="scanChart"><div class="cload">Loading chart…</div></div>
+    </div>
+
     <div class="tokcard">
       <div class="tokrow">
         <div class="tokicon" id="tokicon">?</div>
@@ -462,7 +473,7 @@ async function fetchMarket(addr,totalSupply,dec){
       const supply=Number(totalSupply)/Math.pow(10,dec||18);
       if(isFinite(supply)&&supply>0)mcap=price*supply;
     }
-    return{price,mcap,
+    return{price,mcap,pairAddress:(use.pairAddress||null),
       vol:(use.volume&&use.volume.h24)||null,
       liq:(use.liquidity&&use.liquidity.usd)||null,
       dex:use.dexId||null};
@@ -929,32 +940,26 @@ async function fetchTokenPage(query){
     ts:t.exchange_rate_updated_at||t.created_at||null
   })).filter(r=>/^0x[0-9a-f]{40}$/.test(r.addr));
 }
-/* Newly-deployed tokens = first Transfer from 0x0 (the mint).
-   Blockscout exposes an Etherscan-compatible logs API; the RPC does not. */
-async function mintedTokens(){
-  let latest=null;
-  try{latest=parseInt(await rpc('eth_blockNumber',[]),16);}catch(e){}
-  if(!latest)return null;
-  for(const span of [120000,40000,10000]){
-    const from=Math.max(0,latest-span);
+/* True deployment order via Blockscout's getcontractcreation (batchable).
+   Returns [{addr, block, ts}] newest-first, or null if unavailable. */
+async function creationTimes(addrs){
+  const out={};
+  /* endpoint accepts up to ~5 addresses per call reliably */
+  for(let i=0;i<addrs.length;i+=5){
+    const batch=addrs.slice(i,i+5);
     try{
-      const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
-        +'&topic0='+TRANSFER_TOPIC+'&topic1='+ZERO_TOPIC+'&topic0_1_opr=and',1);
-      if(!j||j.status!=='1'||!Array.isArray(j.result)||!j.result.length)continue;
-      const first={},count={};
-      for(const l of j.result){
-        const a=(l.address||'').toLowerCase();
-        const blk=parseInt(l.blockNumber,16);
-        if(!/^0x[0-9a-f]{40}$/.test(a)||!isFinite(blk))continue;
-        count[a]=(count[a]||0)+1;
-        if(!(a in first)||blk<first[a])first[a]=blk;
+      const j=await scout('/api?module=contract&action=getcontractcreation&contractaddresses='+batch.join(','),1);
+      if(j&&j.status==='1'&&Array.isArray(j.result)){
+        for(const r of j.result){
+          const a=(r.contractAddress||'').toLowerCase();
+          if(!/^0x[0-9a-f]{40}$/.test(a))continue;
+          out[a]={block:r.blockNumber?parseInt(r.blockNumber,10):null,
+                  ts:r.timestamp?Date.parse(r.timestamp)||parseInt(r.timestamp,10):null};
+        }
       }
-      const rows=Object.entries(first).sort((x,y)=>y[1]-x[1])
-        .map(([addr,block])=>({addr,firstBlock:block,mints:count[addr]}));
-      if(rows.length)return rows;
     }catch(e){}
   }
-  return null;
+  return out;
 }
 
 /* One DexScreener call for up to 30 tokens -> real 24h volume for ranking. */
@@ -995,17 +1000,18 @@ async function discoverTokens(){
   let trendingBy='24h volume';
   if(!trending.length){trending=withVol.slice().sort((a,b)=>b.holders-a.holders);trendingBy='holders';}
 
-  /* NEWEST: real deployment order from mint logs */
-  let newest=[],newestBy='explorer order';
-  const mints=await mintedTokens();
-  if(mints&&mints.length){
-    const known=new Map(withVol.map(r=>[r.addr,r]));
-    newest=mints.map(m=>Object.assign({},known.get(m.addr)||{addr:m.addr},
-      {firstBlock:m.firstBlock,mkt:(mkts[m.addr]||null)}));
-    newestBy='first mint on-chain';
+  /* NEWEST: real deployment order via contract creation time */
+  let newest=[],newestBy='';
+  const created=await creationTimes(candidates);
+  const dated=withVol.filter(r=>created[r.addr]&&(created[r.addr].block!=null||created[r.addr].ts!=null))
+    .map(r=>Object.assign({},r,{_c:created[r.addr]}));
+  if(dated.length>=3){
+    const haveBlocks=dated.every(r=>r._c.block!=null);
+    dated.sort((a,b)=>haveBlocks?(b._c.block-a._c.block):((b._c.ts||0)-(a._c.ts||0)));
+    newest=dated;newestBy=haveBlocks?'newest deployments':'newest by creation time';
   }else{
-    newest=withVol.slice().sort((a,b)=>a.holders-b.holders);   /* least-established */
-    newestBy='fewest holders (deployment time unavailable)';
+    /* last resort: explorer order (which at least isn't holder-sorted) */
+    newest=rows.slice();newestBy='explorer order';
   }
 
   const out={newest:newest.slice(0,MAX_TOKENS),trending:trending.slice(0,MAX_TOKENS),
@@ -1124,52 +1130,45 @@ async function scoutLogs(address,maxPages){
   return out;
 }
 async function priceSeries(token){
-  if(!token.pool)return{kind:'none',reason:'no pool found'};
-  const items=await scoutLogs(token.pool,3);
-  if(!items.length)return{kind:'none',reason:'no logs indexed for this pool'};
+  /* prefer the real DexScreener pair over "biggest contract holder" */
+  const pool=(token.pairAddress)||token.pool;
+  if(!pool)return{kind:'none',reason:'no pool found'};
   let t0=null,t1=null;
-  try{t0=addrWord(await call(token.pool,READ.token0));}catch(e){}
-  try{t1=addrWord(await call(token.pool,READ.token1));}catch(e){}
-  if(!t0||!t1)return{kind:'none',reason:'not a standard pool'};
-  const tokenIs0=(t0===token.addr.toLowerCase());
+  try{t0=addrWord(await call(pool,READ.token0));}catch(e){}
+  try{t1=addrWord(await call(pool,READ.token1));}catch(e){}
+  if(!t0||!t1)return{kind:'none',reason:'not a v2-style pool'};
+  const tokenIs0=t0===token.addr.toLowerCase();
   if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in this pool'};
-  let qdec=18;
-  try{qdec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
+  let quoteDec=18;
+  try{quoteDec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
 
-  const pts=[];
+  const items=await scoutLogs(pool,3);
+  let pts=[];
   for(const l of items){
-    const tp=((l.topics||[])[0]||'').toLowerCase();
-    const d=strip(l.data);
+    const t=(l.topics||[])[0];
+    if(!t||t.toLowerCase()!==TOPIC_SYNC)continue;
+    const d=strip(l.data);if(d.length<128)continue;
+    const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
+    const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
+    if(base===0n)continue;
+    const S=10n**12n;
+    const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(quoteDec)));
+    const p=Number(scaled)/1e12;
     const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
-    if(!isFinite(blk))continue;
-    if(tp===TOPIC_SYNC){
-      // v2: Sync(reserve0, reserve1)
-      if(d.length<128)continue;
-      const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
-      const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
-      if(base===0n)continue;
-      const S=10n**12n;
-      const scaled=quote*S*(10n**BigInt(token.dec))/(base*(10n**BigInt(qdec)));
-      const p=Number(scaled)/1e12;
-      if(isFinite(p)&&p>0)pts.push({x:blk,y:p});
-    }else if(tp===TOPIC_V3SWAP){
-      // v3: Swap(..., sqrtPriceX96 at word index 2, ...)
-      if(d.length<192)continue;
-      const sq=BigInt('0x'+d.slice(128,192));
-      if(sq===0n)continue;
-      // price of token0 in token1 = (sq/2^96)^2 * 10^(dec0-dec1)
-      const dec0=tokenIs0?token.dec:qdec, dec1=tokenIs0?qdec:token.dec;
-      const num=sq*sq;
-      const S=10n**18n;
-      let p0=Number(num*S/(Q96*Q96))/1e18;
-      p0=p0*Math.pow(10,dec0-dec1);
-      const p=tokenIs0?p0:(p0>0?1/p0:0);
-      if(isFinite(p)&&p>0)pts.push({x:blk,y:p});
-    }
+    if(isFinite(p)&&p>0&&isFinite(blk))pts.push({x:blk,y:p});
   }
   pts.sort((a,b)=>a.x-b.x);
-  if(pts.length<2)return{kind:'none',reason:'not enough price events to chart'};
-  return{kind:'price',pts:pts.slice(-300)};
+  if(pts.length<2)return{kind:'none',reason:'no reserve updates found'};
+
+  /* Anchor the reserve-ratio series to the real USD price so the axis is $,
+     not raw quote-token units. Shape and % change are unchanged. */
+  const usd=(token.mkt&&token.mkt.price)||(token.priceUsd)||null;
+  if(usd&&isFinite(usd)&&usd>0){
+    const last=pts[pts.length-1].y;
+    if(last>0){const k=usd/last;if(isFinite(k)&&k>0)pts=pts.map(p=>({x:p.x,y:p.y*k}));}
+    return{kind:'price',unit:'usd',pts:pts.slice(-300)};
+  }
+  return{kind:'price',unit:'quote',pts:pts.slice(-300)};
 }
 
 /* ===== render ===== */
@@ -1287,9 +1286,10 @@ async function run(){
     const ov={sym,name,label:(shared&&shared.label)||'unknown',why:(shared&&shared.why)||'',
       conc:mH.conc,sim:sharedSim,lp:sharedLp,bundle:mH.bundle,mkt,holderCount:mH.holderCount,flags:sharedFlags};
     const text=buildOverview(ov);
-    $('aiBody').textContent=text;
-    $('aiCopy').onclick=()=>{try{navigator.clipboard.writeText(text);$('aiCopy').textContent='Copied \u2713';
-      setTimeout(()=>{$('aiCopy').textContent='Copy';},1500);}catch(e){}};
+    const aiEl=$('aiBody');if(aiEl)aiEl.textContent=text;
+    const cpEl=$('aiCopy');
+    if(cpEl)cpEl.onclick=()=>{try{navigator.clipboard.writeText(text);cpEl.textContent='Copied \u2713';
+      setTimeout(()=>{cpEl.textContent='Copy';},1500);}catch(e){}};
 
     const res=renderVerdict([mS,mH,mL],addr,sym,shared,ov);
     pushRecent(addr,name,sym,res.status,res.label);
@@ -1297,7 +1297,8 @@ async function run(){
     /* interactive chart for the scanned token */
     (async()=>{
       const box=$('scanChart');
-      try{const s=await priceSeries({addr,pool:mH.pool,dec});renderChart(box,s);}
+      if(!box)return;
+      try{const s=await priceSeries({addr,pool:mH.pool,dec,mkt,pairAddress:(mkt&&mkt.pairAddress)||null});renderChart(box,s);}
       catch(e){box.innerHTML='<div class="cload">Couldn\u2019t load chart: '+esc(String(e.message||e))+'</div>';}
     })();
     log('\u2713 done','ok');
@@ -1309,6 +1310,10 @@ $('addr').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
 
 
 /* ===== chart ===== */
+function fmtPrice(p){if(!isFinite(p)||p<=0)return '\u2014';
+  if(p>=1)return p.toFixed(4);
+  if(p>=0.0001)return p.toFixed(6);
+  return p.toExponential(3);}
 function buildChart(pts,W,H,pad){
   if(!pts||pts.length<2)return null;
   const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);
@@ -1337,10 +1342,10 @@ function renderChart(host,series){
     ?'Reconstructed from the pool\u2019s recent reserve updates on-chain. Recent history only \u2014 not the token\u2019s full lifetime.'
     :'No price pool found, so this shows how often the token moved, not what it costs.')+' Drag across the chart to inspect.';
   host.innerHTML=
-    '<div class="chart-meta"><div><span class="chart-price">'+(isPrice?fmtPrice(last):last.toLocaleString())+'</span>'
-    +(isPrice?' <span style="color:var(--fg-faint);font-size:11px">quote/token</span>':'')+'</div>'
+    '<div class="chart-meta"><div><span class="chart-price">'+(isPrice?((series.unit==='usd'?'$':'')+fmtPrice(last)):last.toLocaleString())+'</span>'
+    +(isPrice?' <span style="color:var(--fg-faint);font-size:11px">'+(series.unit==='usd'?'USD':'quote/token')+'</span>':'')+'</div>'
     +'<div><span class="chart-chg '+(up?'chg-up':'chg-dn')+'">'+(up?'+':'')+chg.toFixed(1)+'%</span></div></div>'
-    +'<div class="chart-kind">'+(isPrice?'Price \u00b7 from pool reserves':'Transfer activity \u00b7 not price')+'</div>'
+    +'<div class="chart-kind">'+(isPrice?(series.unit==='usd'?'Price (USD) \u00b7 from pool reserves, anchored to live price':'Price \u00b7 pool reserves (quote units)'):'Transfer activity')+'</div>'
     +'<svg class="chart" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
     +'<defs><linearGradient id="'+uid+'" x1="0" y1="0" x2="0" y2="1">'
     +'<stop offset="0%" stop-color="'+col+'" stop-opacity="0.28"/>'
@@ -1350,7 +1355,7 @@ function renderChart(host,series){
     +'<line class="cx" x1="0" y1="0" x2="0" y2="'+H+'" stroke="'+col+'" stroke-width="1" stroke-opacity="0" stroke-dasharray="3 3"/>'
     +'<circle class="cdot" cx="0" cy="0" r="3.5" fill="'+col+'" opacity="0"/></svg>'
     +'<div class="chart-note">'+baseNote+'</div>';
-  const svg=host.querySelector('svg.chart'),cx=svg.querySelector('.cx'),dot=svg.querySelector('.cdot'),note=host.querySelector('.chart-note');
+  const svg=host.querySelector('svg.chart');const cx=svg.querySelector('.cx'),dot=svg.querySelector('.cdot'),note=host.querySelector('.chart-note');
   function at(clientX){
     const r=svg.getBoundingClientRect();const px=(clientX-r.left)/r.width*W;
     let best=0,bd=Infinity;
@@ -1358,7 +1363,7 @@ function renderChart(host,series){
     const p=pts[best];
     cx.setAttribute('x1',c.sx(p.x));cx.setAttribute('x2',c.sx(p.x));cx.setAttribute('stroke-opacity','0.5');
     dot.setAttribute('cx',c.sx(p.x));dot.setAttribute('cy',c.sy(p.y));dot.setAttribute('opacity','1');
-    note.textContent=(isPrice?'Price '+fmtPrice(p.y):'Transfers '+p.y)+'  \u00b7  block '+p.x.toLocaleString();
+    note.textContent=(isPrice?('Price '+(series.unit==='usd'?'$':'')+fmtPrice(p.y)):'Transfers '+p.y)+'  \u00b7  block '+p.x.toLocaleString();
   }
   function off(){cx.setAttribute('stroke-opacity','0');dot.setAttribute('opacity','0');note.textContent=baseNote;}
   svg.addEventListener('mousemove',e=>at(e.clientX));
