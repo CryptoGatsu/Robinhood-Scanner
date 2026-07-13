@@ -142,6 +142,20 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .blegend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:10.5px;color:var(--fg-dim)}
 .blegend span{display:flex;align-items:center;gap:5px}
 .blegend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+.bubinfo{margin-top:10px;font-size:12px;color:var(--fg-dim);line-height:1.6}
+.bubinfo code{font-family:var(--mono);color:var(--fg);background:var(--surface-2);padding:2px 6px;border-radius:5px}
+.bubinfo a{color:var(--green);text-decoration:none;margin-left:4px}
+.bubinfo .bcopy{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);
+  border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit;margin-left:6px}
+.bk{font-size:9.5px;font-weight:800;text-transform:uppercase;padding:2px 6px;border-radius:5px}
+.bk-pool{color:#5ac8fa;background:rgba(90,200,250,.12)}
+.bk-whale{color:#ffb800;background:rgba(255,184,0,.12)}
+.bk-creator{color:#ff5000;background:rgba(255,80,0,.12)}
+.bk-holder{color:var(--green);background:rgba(0,200,5,.12)}
+.bk-burn{color:#7a807a;background:rgba(122,128,122,.12)}
+.bub.sel circle{stroke:#fff;stroke-width:2}
+.bub{cursor:pointer}
 </style>
 </head>
 <body>
@@ -1139,40 +1153,65 @@ async function logsRpc(method, params) {
 }
 
 /* Pull every Transfer log for a token, chunking by block range and
-   bisecting whenever the endpoint rejects a range as too large. */
+   bisecting whenever the endpoint rejects a range as too large.
+   `sinceBlock` bounds the scan to the token's lifetime (from DexScreener's
+   pairCreatedAt) so we don't walk the whole chain. Chunks run in parallel. */
 async function fetchTransferLogs(token, opts) {
   opts = opts || {};
   let latest;
   try { latest = parseInt(await logsRpc('eth_blockNumber', []), 16); }
-  catch (e) { return null; }              // endpoint unreachable -> caller falls back
+  catch (e) { return null; }
   if (!latest) return null;
 
-  const maxWindow = opts.maxWindow || 9000;
-  const start = Math.max(0, latest - (opts.lookback || latest));
+  const maxWindow = opts.maxWindow || 45000;
   const out = [];
-  let guard = 0, hardFail = false;
+  let hardFail = false, guard = 0, foundMint = false;
 
   async function range(from, to) {
-    if (hardFail || ++guard > 400) return;
+    if (hardFail || ++guard > 3000) return;
     try {
       const logs = await logsRpc('eth_getLogs', [{
         address: token, topics: [TRANSFER_TOPIC],
         fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
       }]);
-      if (Array.isArray(logs)) for (const l of logs) out.push(l);
+      if (Array.isArray(logs)) {
+        for (const l of logs) {
+          out.push(l);
+          if ((('0x' + (l.topics[1] || '').slice(-40)).toLowerCase()) === H_ZERO) foundMint = true;
+        }
+      }
     } catch (e) {
       const msg = String(e.message || e).toLowerCase();
-      // if the very first call is rejected outright (method not supported), bail
-      if (/method|not supported|invalid/.test(msg) && guard <= 1) { hardFail = true; return; }
+      if (/method|not supported|does not exist/.test(msg) && guard <= 1) { hardFail = true; return; }
       if (to > from) { const mid = (from + to) >> 1; await range(from, mid); await range(mid + 1, to); }
     }
   }
 
-  for (let f = start; f <= latest && !hardFail; f += maxWindow + 1) {
-    await range(f, Math.min(latest, f + maxWindow));
+  // Walk backward from the tip in expanding windows; stop once the mint is seen.
+  const superWindow = maxWindow * 8;
+  let hi = latest, rounds = 0;
+  while (hi > 0 && !foundMint && !hardFail && rounds < 60) {
+    rounds++;
+    const lo = Math.max(0, hi - superWindow + 1);
+    const chunks = [];
+    for (let f = lo; f <= hi; f += maxWindow + 1) chunks.push([f, Math.min(hi, f + maxWindow)]);
+    await Promise.all(chunks.map(([f, t]) => range(f, t)));
+    hi = lo - 1;
+    if (opts.sinceBlock != null && hi < opts.sinceBlock) break;
   }
   if (hardFail) return null;
   return out;
+}
+
+/* Rough block for a unix-ms timestamp, using ~250ms block time as a floor.
+   Over-estimates history slightly (safe) rather than missing the launch. */
+function approxSinceBlock(latest, pairCreatedAtMs) {
+  if (!pairCreatedAtMs) return null;
+  const ageSec = (Date.now() - pairCreatedAtMs) / 1000;
+  if (ageSec <= 0 || ageSec > 60 * 60 * 24 * 400) return null; // sanity bound
+  // Robinhood Chain targets ~100-250ms blocks; use 200ms and pad 2x for safety
+  const blocks = Math.ceil(ageSec / 0.2) * 1.5;
+  return Math.max(0, Math.floor(latest - blocks));
 }
 
 /* Replay logs into balances. */
@@ -1195,12 +1234,16 @@ function reconstructBalances(logs) {
 }
 
 /* Public entry: returns holders + concentration, or null if logs unavailable. */
-async function holdersFromChain(token, pool) {
-  const logs = await fetchTransferLogs(token);
+async function holdersFromChain(token, pool, pairCreatedAtMs) {
+  let latest = null;
+  try { latest = parseInt(await logsRpc('eth_blockNumber', []), 16); } catch (e) {}
+  const sinceBlock = latest ? approxSinceBlock(latest, pairCreatedAtMs) : null;
+  const logs = await fetchTransferLogs(token, sinceBlock != null ? { sinceBlock } : {});
   if (!logs || !logs.length) return null;
   const holders = reconstructBalances(logs);
   if (!holders.length) return null;
 
+  const analysis = analyzeFromLogs(logs, pool);
   const p = (pool || '').toLowerCase();
   const isSys = a => a === H_ZERO || a === H_DEAD;
   const real = holders.filter(h => h.addr !== p && !isSys(h.addr));
@@ -1214,11 +1257,20 @@ async function holdersFromChain(token, pool) {
     top10 = pctOf(c);
   }
 
+  // creator's current holding as a % of circulating (pool excluded)
+  let creatorPct = null;
+  if (analysis.creator && total > 0n) {
+    const cr = real.find(h => h.addr === analysis.creator);
+    creatorPct = cr ? Number((cr.val * 10000n) / total) / 100 : 0;
+  }
+
   return {
-    holders,                 // full list incl. pool/burn (for the bubble map)
-    real,                    // holders only
+    holders, real,
     conc: { top1, top10, count: real.length },
     total,
+    creator: analysis.creator,
+    creatorPct,
+    bundle: { maxFunder: analysis.maxFunder, funderAddr: analysis.funderAddr, maxRecipients: 0, complete: true },
     source: 'chain'
   };
 }
@@ -1246,6 +1298,46 @@ function holdersToBubbles(res, pool, creator) {
     return { addr: h.addr, pct, kind, r };
   });
   return { bubbles, edges: [] };
+}
+
+/* From the same Transfer logs, derive the creator and an accurate bundle read.
+   Excludes the pool, zero address, and creator as "funders" — seeding LP or team
+   wallets at launch is normal and must not read as an insider bundle. */
+function analyzeFromLogs(logs, pool) {
+  const p = (pool || '').toLowerCase();
+  // creator = the address that received the very first mint (Transfer from ZERO)
+  let creator = null;
+  for (const l of logs) {
+    if ((l.topics[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue;
+    const from = ('0x' + l.topics[1].slice(-40)).toLowerCase();
+    if (from === H_ZERO) { creator = ('0x' + l.topics[2].slice(-40)).toLowerCase(); break; }
+  }
+
+  // first funder of each wallet (the address that first sent it tokens)
+  const firstFunder = {};
+  const blockOf = {};
+  for (const l of logs) {
+    if ((l.topics[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue;
+    const from = ('0x' + l.topics[1].slice(-40)).toLowerCase();
+    const to = ('0x' + l.topics[2].slice(-40)).toLowerCase();
+    const blk = l.blockNumber ? parseInt(l.blockNumber, 16) : 0;
+    if (!(to in firstFunder)) { firstFunder[to] = from; blockOf[to] = blk; }
+  }
+
+  // group recipients by funder, EXCLUDING legitimate sources
+  const skip = new Set([H_ZERO, H_DEAD, p, creator].filter(Boolean));
+  const byFunder = {};
+  for (const wallet in firstFunder) {
+    const f = firstFunder[wallet];
+    if (skip.has(f) || skip.has(wallet)) continue;
+    (byFunder[f] = byFunder[f] || []).push(wallet);
+  }
+  let maxFunder = 0, funderAddr = null;
+  for (const f in byFunder) {
+    if (byFunder[f].length > maxFunder) { maxFunder = byFunder[f].length; funderAddr = f; }
+  }
+
+  return { creator, maxFunder, funderAddr, complete: true };
 }
 
 /* ================= scan orchestration + rendering ================= */
@@ -1332,14 +1424,17 @@ async function run() {
     let chainHolders = null;
     try {
       log('  reading holders from chain logs\u2026');
-      chainHolders = await holdersFromChain(addr, poolGuess);
+      chainHolders = await holdersFromChain(addr, poolGuess, mkt && mkt.pairCreatedAt);
     } catch (e) {}
     if (chainHolders && chainHolders.conc) {
-      const bub = holdersToBubbles(chainHolders, poolGuess, null);
+      const bub = holdersToBubbles(chainHolders, poolGuess, chainHolders.creator);
       mH = {
         status: 'ok', pool: poolGuess, sampleHolder: mHexplorer.sampleHolder,
         conc: chainHolders.conc, holderCount: chainHolders.conc.count,
-        bubbles: bub.bubbles, edges: bub.edges, source: 'chain'
+        bubbles: bub.bubbles, edges: bub.edges, source: 'chain',
+        bundle: chainHolders.bundle,           // pool/creator excluded — accurate
+        creator: chainHolders.creator,
+        creatorPct: chainHolders.creatorPct
       };
       log('  \u2713 ' + chainHolders.conc.count + ' holders from chain', 'ok');
     }
@@ -1456,6 +1551,33 @@ function render(d) {
   $('result').innerHTML = h;
   const cs = $('copyShare');
   if (cs) cs.onclick = () => { try { navigator.clipboard.writeText(shareUrl); cs.textContent = 'Copied \u2713'; setTimeout(() => cs.textContent = 'Copy link', 1400); } catch (e) {} };
+
+  // tappable bubbles
+  const bubSvg = $('bubbles');
+  if (bubSvg) {
+    const info = document.createElement('div');
+    info.className = 'bubinfo';
+    info.innerHTML = 'Tap a bubble to see the wallet.';
+    bubSvg.parentNode.appendChild(info);
+    const onPick = e => {
+      const g = e.target.closest('.bub');
+      if (!g) return;
+      const addr = g.getAttribute('data-addr');
+      const pct = g.getAttribute('data-pct');
+      const kind = g.getAttribute('data-kind') || 'holder';
+      if (!addr) return;
+      bubSvg.querySelectorAll('.bub').forEach(b => b.classList.remove('sel'));
+      g.classList.add('sel');
+      info.innerHTML = '<span class="bk bk-' + kind + '">' + kind + '</span> '
+        + '<code>' + shortAddr(addr) + '</code> \u00b7 ' + (parseFloat(pct) || 0).toFixed(2) + '% '
+        + '<a href="' + SCOUT + '/address/' + addr + '" target="_blank" rel="noopener">explorer \u2197</a> '
+        + '<button class="bcopy" data-a="' + addr + '">copy</button>';
+      const bc = info.querySelector('.bcopy');
+      if (bc) bc.onclick = () => { try { navigator.clipboard.writeText(addr); bc.textContent = 'copied \u2713'; setTimeout(() => bc.textContent = 'copy', 1200); } catch (e) {} };
+    };
+    bubSvg.addEventListener('click', onPick);
+    bubSvg.addEventListener('touchstart', onPick, { passive: true });
+  }
 }
 
 function levelsHtml(L) {
@@ -1484,6 +1606,11 @@ function renderFindings(d) {
   const conc = (d.mH && d.mH.conc) || null;
   if (conc && conc.top1 != null) rows.push(finding(conc.top1 >= 30 ? 'fail' : conc.top1 >= 10 ? 'warn' : 'pass', 'Biggest wallet', conc.top1.toFixed(1) + '%'));
   if (conc && conc.top10 != null) rows.push(finding(conc.top10 >= 70 ? 'warn' : 'pass', 'Top 10 wallets', conc.top10.toFixed(1) + '%'));
+  if (d.mH && d.mH.creatorPct != null) {
+    const cp = d.mH.creatorPct;
+    rows.push(finding(cp >= 20 ? 'fail' : cp >= 5 ? 'warn' : 'pass', 'Creator holdings',
+      cp < 0.1 ? 'Creator sold / holds none' : cp.toFixed(1) + '%'));
+  }
 
   if (d.bundle && d.bundle.maxRecipients >= 3) rows.push(finding('fail', 'Bundled launch', d.bundle.maxRecipients + ' wallets funded in one tx'));
   else if (d.bundle && d.bundle.complete) rows.push(finding('pass', 'Launch distribution', 'No bundle pattern found'));
