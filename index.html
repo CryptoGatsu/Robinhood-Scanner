@@ -327,7 +327,7 @@ function _transient(status,err){
 const _eb=(a,ra)=>(ra?Math.min(8000,ra*1000):Math.min(6000,500*Math.pow(2,a)))+Math.random()*150;
 let SCOUT_DOWN=false;
 async function scout(p,tries){
-  tries=tries||3;
+  tries=tries||2;
   for(let a=0;a<tries;a++){
     let res=null,err=null;
     try{res=await fetch(SCOUT+p,{headers:{accept:'application/json'}});}catch(e){err=e;}
@@ -605,7 +605,7 @@ async function modHoneypot(addr,pool,sampleHolder){
 async function modHolders(addr,dec){
   let info=null,holders=null,creator=null;
   try{info=await scout('/api/v2/tokens/'+addr);}catch(e){}
-  try{holders=(await scout('/api/v2/tokens/'+addr+'/holders')).items;}catch(e){}
+  try{holders=(await scout('/api/v2/tokens/'+addr+'/holders',1)).items;}catch(e){}
   try{const a=await scout('/api/v2/addresses/'+addr);creator=(a.creator_address_hash||'').toLowerCase()||null;}catch(e){}
   if(!holders||!holders.length)return{id:'holders',title:'Who holds it?',status:'unknown',pool:null,sampleHolder:null,bubbles:null,edges:[],findings:[F('unknown','How spread out is ownership?','Can\u2019t tell yet','The explorer returned no holders \u2014 usually a brand-new token. Treat as high risk.')]};
 
@@ -1170,10 +1170,15 @@ async function run() {
     ]);
 
     // 4. honeypot sim + LP lock in parallel (both need the pool)
+    // The holders endpoint sometimes 500s on Blockscout; when it does we lose the
+    // pool it derives. DexScreener gives us the pair address independently, so use
+    // that as a fallback — a holders failure no longer blocks the sell test.
+    const pool = mH.pool || (mkt && mkt.pairAddress) || null;
+    if (!mH.pool && pool) log('  using DEX pair as pool (holders unavailable)');
     log('\u203a sell test + liquidity\u2026');
     const [mS, mL] = await Promise.all([
-      modHoneypot(addr, mH.pool, mH.sampleHolder).catch(() => ({ status: 'unknown' })),
-      modLiquidity(addr, mH.pool, dec).catch(() => ({ status: 'unknown' }))
+      modHoneypot(addr, pool, mH.sampleHolder).catch(() => ({ status: 'unknown' })),
+      modLiquidity(addr, pool, dec).catch(() => ({ status: 'unknown' }))
     ]);
 
     // 5. code flags (from the bytecode we already have) + bundle (computed in modHolders)
