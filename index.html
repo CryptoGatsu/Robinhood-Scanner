@@ -1168,13 +1168,21 @@ async function fetchTransferLogs(token, opts) {
   let hardFail = false, guard = 0, foundMint = false;
 
   async function range(from, to) {
-    if (hardFail || ++guard > 3000) return;
+    if (hardFail || ++guard > 6000) return;
     try {
       const logs = await logsRpc('eth_getLogs', [{
         address: token, topics: [TRANSFER_TOPIC],
         fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
       }]);
       if (Array.isArray(logs)) {
+        // Providers cap results per call (commonly 1000/2000/10000). If we hit
+        // the cap the response is TRUNCATED — missing logs would corrupt every
+        // balance. Bisect to fetch the rest rather than trust a partial page.
+        if (logs.length >= 1000 && to > from) {
+          const mid = (from + to) >> 1;
+          await range(from, mid); await range(mid + 1, to);
+          return;
+        }
         for (const l of logs) {
           out.push(l);
           if ((('0x' + (l.topics[1] || '').slice(-40)).toLowerCase()) === H_ZERO) foundMint = true;
@@ -1183,6 +1191,7 @@ async function fetchTransferLogs(token, opts) {
     } catch (e) {
       const msg = String(e.message || e).toLowerCase();
       if (/method|not supported|does not exist/.test(msg) && guard <= 1) { hardFail = true; return; }
+      // "more than N results" / "range too large" -> bisect
       if (to > from) { const mid = (from + to) >> 1; await range(from, mid); await range(mid + 1, to); }
     }
   }
@@ -1243,34 +1252,58 @@ async function holdersFromChain(token, pool, pairCreatedAtMs) {
   const holders = reconstructBalances(logs);
   if (!holders.length) return null;
 
-  const analysis = analyzeFromLogs(logs, pool);
-  const p = (pool || '').toLowerCase();
+  const grand = holders.reduce((s, h) => s + h.val, 0n);
+
+  // Identify the liquidity pool. Prefer the DexScreener pair address; otherwise
+  // fall back to the dominant-holder heuristic (a single holder that dwarfs the
+  // rest is the LP — Blockscout excludes it from holder ranking, so do we).
+  let p = (pool || '').toLowerCase();
+  const known = new Set([p, H_ZERO, H_DEAD].filter(Boolean));
+  if (!p || !holders.some(h => h.addr === p)) {
+    const top = holders[0], second = holders.find(h => !known.has(h.addr) && h.addr !== (top && top.addr));
+    if (top && grand > 0n) {
+      const topPct = Number((top.val * 10000n) / grand) / 100;
+      const secondVal = second ? second.val : 0n;
+      // dominant: >25% of everything AND at least 3x the next holder
+      if (topPct >= 25 && (secondVal === 0n || top.val > secondVal * 3n) && !known.has(top.addr)) {
+        p = top.addr;
+      }
+    }
+  }
   const isSys = a => a === H_ZERO || a === H_DEAD;
   const real = holders.filter(h => h.addr !== p && !isSys(h.addr));
-  const total = real.reduce((s, h) => s + h.val, 0n);
+
+  // Percentages are of TOTAL SUPPLY (the sum of all balances incl. pool + burn),
+  // matching Blockscout and every explorer. The pool is excluded from the
+  // ranking/list but NOT from the denominator — otherwise a small holder's
+  // share gets wrongly inflated.
+  const supply = grand > 0n ? grand : 1n;
 
   let top1 = 0, top10 = 0;
-  if (total > 0n) {
-    const pctOf = v => Number((v * 10000n) / total) / 100;
+  {
+    const pctOf = v => Number((v * 10000n) / supply) / 100;
     top1 = real.length ? pctOf(real[0].val) : 0;
     let c = 0n; for (let i = 0; i < 10 && i < real.length; i++) c += real[i].val;
     top10 = pctOf(c);
   }
 
-  // creator's current holding as a % of circulating (pool excluded)
+  // re-run bundle analysis with the DETECTED pool so LP-funded buyers are excluded
+  const analysis2 = analyzeFromLogs(logs, p);
+
+  // creator's current holding as a % of total supply
   let creatorPct = null;
-  if (analysis.creator && total > 0n) {
-    const cr = real.find(h => h.addr === analysis.creator);
-    creatorPct = cr ? Number((cr.val * 10000n) / total) / 100 : 0;
+  if (analysis2.creator) {
+    const cr = real.find(h => h.addr === analysis2.creator);
+    creatorPct = cr ? Number((cr.val * 10000n) / supply) / 100 : 0;
   }
 
   return {
-    holders, real,
+    holders, real, pool: p,
     conc: { top1, top10, count: real.length },
-    total,
-    creator: analysis.creator,
+    total: supply,
+    creator: analysis2.creator,
     creatorPct,
-    bundle: { maxFunder: analysis.maxFunder, funderAddr: analysis.funderAddr, maxRecipients: 0, complete: true },
+    bundle: { maxFunder: analysis2.maxFunder, funderAddr: analysis2.funderAddr, maxRecipients: 0, complete: true },
     source: 'chain'
   };
 }
@@ -1427,9 +1460,10 @@ async function run() {
       chainHolders = await holdersFromChain(addr, poolGuess, mkt && mkt.pairCreatedAt);
     } catch (e) {}
     if (chainHolders && chainHolders.conc) {
-      const bub = holdersToBubbles(chainHolders, poolGuess, chainHolders.creator);
+      const detectedPool = chainHolders.pool || poolGuess;
+      const bub = holdersToBubbles(chainHolders, detectedPool, chainHolders.creator);
       mH = {
-        status: 'ok', pool: poolGuess, sampleHolder: mHexplorer.sampleHolder,
+        status: 'ok', pool: detectedPool, sampleHolder: mHexplorer.sampleHolder,
         conc: chainHolders.conc, holderCount: chainHolders.conc.count,
         bubbles: bub.bubbles, edges: bub.edges, source: 'chain',
         bundle: chainHolders.bundle,           // pool/creator excluded — accurate
