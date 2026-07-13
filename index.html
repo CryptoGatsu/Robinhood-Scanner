@@ -1206,7 +1206,9 @@ async function fetchTransferLogs(token, opts) {
     for (let f = lo; f <= hi; f += maxWindow + 1) chunks.push([f, Math.min(hi, f + maxWindow)]);
     await Promise.all(chunks.map(([f, t]) => range(f, t)));
     hi = lo - 1;
-    if (opts.sinceBlock != null && hi < opts.sinceBlock) break;
+    /* NOTE: no sinceBlock floor. Block-time estimates proved unreliable (this
+       chain runs ~100ms blocks); stopping early misses the launch window and
+       corrupts every balance. The mint is the only correct stop condition. */
   }
   if (hardFail) return null;
   return out;
@@ -1460,6 +1462,17 @@ async function run() {
       chainHolders = await holdersFromChain(addr, poolGuess, mkt && mkt.pairCreatedAt);
     } catch (e) {}
     if (chainHolders && chainHolders.conc) {
+      // If the "single funder" is a CONTRACT (router, pool, distributor), it's
+      // trading infrastructure, not an insider — one getCode call settles it.
+      if (chainHolders.bundle && chainHolders.bundle.maxFunder >= 3 && chainHolders.bundle.funderAddr) {
+        try {
+          const fc = await getCode(chainHolders.bundle.funderAddr);
+          if (fc && fc !== '0x' && fc.length > 2) {
+            chainHolders.bundle = { maxFunder: 0, funderAddr: null, maxRecipients: 0, complete: true };
+            log('  funder is a contract (router) \u2014 not a bundle', 'ok');
+          }
+        } catch (e) {}
+      }
       const detectedPool = chainHolders.pool || poolGuess;
       const bub = holdersToBubbles(chainHolders, detectedPool, chainHolders.creator);
       mH = {
