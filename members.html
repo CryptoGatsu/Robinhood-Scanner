@@ -166,6 +166,29 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .exp-kv{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;margin-top:14px;font-size:12.5px}
 .exp-kv .k{color:var(--fg-faint);white-space:nowrap}
 .exp-kv .v{font-family:var(--mono);color:var(--fg);word-break:break-all}
+
+.exp-detail-h{margin-bottom:6px}
+.exp-detail-h h2{font-size:14px;margin:2px 0;font-family:var(--mono);word-break:break-all;color:var(--fg)}
+.exp-ens{font-size:15px;font-weight:800;color:var(--green);margin-bottom:2px}
+.exp-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.exp-tag{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:6px;background:var(--surface-2);color:var(--fg-dim);border:1px solid var(--line)}
+.exp-tag.tag-ok{background:rgba(0,200,5,.12);color:var(--green);border-color:transparent}
+.exp-tag.tag-fail{background:rgba(255,82,82,.12);color:var(--red);border-color:transparent}
+.exp-link{color:var(--green);cursor:pointer;text-decoration:none}
+.exp-link:hover{text-decoration:underline}
+.exp-tabs{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.exp-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--fg-faint);padding:9px 12px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:-1px}
+.exp-tab:hover{color:var(--fg-dim)}
+.exp-tab.active{color:var(--fg);border-bottom-color:var(--green)}
+.exp-lrow{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid rgba(36,40,36,.5);cursor:pointer;font-size:12px}
+.exp-lrow:hover{background:var(--surface-2)}
+.exp-lrow .lead{font-family:var(--mono);color:var(--fg);font-weight:600;flex:none}
+.exp-lrow .mid{color:var(--fg-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
+.exp-lrow .val{font-family:var(--mono);color:var(--fg-dim);flex:none;font-size:11.5px}
+.exp-lrow .tail{font-family:var(--mono);color:var(--fg-faint);flex:none;font-size:11px}
+.dir{font-size:9.5px;font-weight:800;padding:2px 6px;border-radius:4px;flex:none;letter-spacing:.04em}
+.dir-out{background:rgba(255,176,32,.14);color:var(--amber)}
+.dir-in{background:rgba(0,200,5,.12);color:var(--green)}
 </style>
 </head>
 <body>
@@ -287,16 +310,37 @@ async function proxy(path, q){
   if(!r.ok || j.error){ throw new Error(j.error||('proxy '+r.status)); }
   return j.data;
 }
+// tolerate an endpoint that 404s/500s on this chain — return null instead of throwing
+async function proxySoft(path, q){ try{ return await proxy(path,q); }catch(e){ return null; } }
 
 function fmtAge(iso){
   if(!iso) return '';
   const s = Math.max(0, (Date.now()-new Date(iso).getTime())/1000);
   if(s<60) return Math.floor(s)+'s ago';
   if(s<3600) return Math.floor(s/60)+'m ago';
-  return Math.floor(s/3600)+'h ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
 }
 function shortHash(h){ return h?h.slice(0,10)+'\u2026'+h.slice(-6):''; }
 function shortAddr(a){ return a?a.slice(0,7)+'\u2026'+a.slice(-5):''; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// wei (string/number) -> human ETH
+function fmtEth(wei){
+  if(wei==null||wei==='') return '\u2014';
+  try{
+    const v = BigInt(String(wei).split('.')[0]);
+    const whole = v/(10n**18n), frac=(v%(10n**18n)).toString().padStart(18,'0').replace(/0+$/,'');
+    const s = frac ? (whole.toString()+'.'+frac.slice(0,8).replace(/0+$/,'')) : whole.toString();
+    return s+' ETH';
+  }catch(e){ return String(wei); }
+}
+function fmtNum(n){ if(n==null||n==='') return '\u2014'; const x=Number(n); return isFinite(x)?x.toLocaleString():String(n); }
+function addrField(o){ // Blockscout nests address objects: {hash, name, is_contract, ens_domain_name}
+  if(!o) return '\u2014';
+  if(typeof o==='string') return o;
+  return o.ens_domain_name || o.name || o.hash || '\u2014';
+}
+function addrHash(o){ if(!o) return ''; return typeof o==='string'?o:(o.hash||''); }
 
 // ---- explorer shell ----
 function renderExplorer(address){
@@ -319,21 +363,25 @@ function renderExplorer(address){
   renderLanding();
 }
 
-// ---- search routing ----
 function routeSearch(q){
   if(!q) return;
   if(/^0x[0-9a-fA-F]{64}$/.test(q)) return showTx(q);
   if(/^0x[0-9a-fA-F]{40}$/.test(q)) return showAddress(q);
   if(/^\d+$/.test(q)) return showBlock(q);
+  if(/\.eth$/i.test(q)) return showSearch(q);
   return showSearch(q);
 }
 
 const expBody = () => document.getElementById('expBody');
 function backBar(){ return '<button class="exp-back" onclick="renderLanding()">\u2190 Back to overview</button>'; }
 function loading(){ return '<div class="exp-loading">loading\u2026</div>'; }
-function errBox(m){ return '<div class="exp-err">'+m+'</div>'; }
+function errBox(m){ return '<div class="exp-err">'+esc(m)+'</div>'; }
+function kvRow(k,v){ return '<span class="k">'+k+'</span><span class="v">'+v+'</span>'; }
+// clickable address/hash inside details
+function addrLink(o){ const h=addrHash(o); if(!h) return '\u2014'; return '<a class="exp-link" onclick="showAddress(\''+h+'\')">'+esc(addrField(o))+'</a>'; }
+function txLink(h){ return h?'<a class="exp-link" onclick="showTx(\''+h+'\')">'+shortHash(h)+'</a>':'\u2014'; }
 
-// ---- landing: latest blocks + txns ----
+// ---- landing ----
 let landingTimer=null;
 async function renderLanding(){
   if(landingTimer){ clearInterval(landingTimer); landingTimer=null; }
@@ -343,18 +391,18 @@ async function renderLanding(){
     +'<div class="exp-panel"><div class="exp-panel-h"><span class="t">Latest transactions</span><span class="live"><span class="dot"></span>live</span></div><div id="expTxns">'+loading()+'</div></div>'
     +'</div>';
   const load = async () => {
-    // blocks
     try{
       const d = await proxy('/api/v2/main-page/blocks');
       const blocks = Array.isArray(d)?d:(d.items||[]);
       const el=document.getElementById('expBlocks');
-      if(el) el.innerHTML = blocks.length ? blocks.slice(0,8).map(b=>
-        '<div class="exp-row" onclick="showBlock(\''+(b.height!=null?b.height:b.number)+'\')">'
-        +'<span class="lead">#'+(b.height!=null?b.height:b.number)+'</span>'
-        +'<span class="mid">'+((b.transactions_count!=null?b.transactions_count:(b.tx_count||0)))+' txns</span>'
-        +'<span class="tail">'+fmtAge(b.timestamp)+'</span></div>').join('') : '<div class="exp-empty">no blocks</div>';
-    }catch(e){ const el=document.getElementById('expBlocks'); if(el) el.innerHTML=errBox(String(e.message||e)); }
-    // txns
+      if(el) el.innerHTML = blocks.length ? blocks.slice(0,8).map(b=>{
+        const h=(b.height!=null?b.height:b.number);
+        return '<div class="exp-row" onclick="showBlock(\''+h+'\')">'
+        +'<span class="lead">#'+h+'</span>'
+        +'<span class="mid">'+(b.transactions_count!=null?b.transactions_count:(b.tx_count||b.transaction_count||0))+' txns</span>'
+        +'<span class="tail">'+fmtAge(b.timestamp)+'</span></div>';
+      }).join('') : '<div class="exp-empty">no blocks</div>';
+    }catch(e){ const el=document.getElementById('expBlocks'); if(el) el.innerHTML=errBox(e.message||e); }
     try{
       const d = await proxy('/api/v2/main-page/transactions');
       const txns = Array.isArray(d)?d:(d.items||[]);
@@ -366,72 +414,183 @@ async function renderLanding(){
         +'<span class="mid">'+fmtAge(t.timestamp)+'</span>'
         +'<span class="pill '+(ok?'pill-ok':'pill-fail')+'">'+(ok?'ok':'fail')+'</span></div>';
       }).join('') : '<div class="exp-empty">no transactions</div>';
-    }catch(e){ const el=document.getElementById('expTxns'); if(el) el.innerHTML=errBox(String(e.message||e)); }
+    }catch(e){ const el=document.getElementById('expTxns'); if(el) el.innerHTML=errBox(e.message||e); }
   };
   await load();
   landingTimer=setInterval(load, 10000);
 }
 
-// ---- detail views (v1 stubs that render whatever Blockscout returns) ----
+// ---- ADDRESS view (Blockscout-like: details grid + tabs) ----
 async function showAddress(addr){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
   expBody().innerHTML = backBar()+loading();
-  try{
-    const d = await proxy('/api/v2/addresses/'+addr);
-    expBody().innerHTML = backBar()
-      +'<div class="exp-detail"><h2>'+addr+'</h2>'
-      +'<div class="exp-kv">'
-      +'<span class="k">Balance</span><span class="v">'+(d.coin_balance!=null?d.coin_balance:'\u2014')+'</span>'
-      +'<span class="k">Txns</span><span class="v">'+(d.transactions_count!=null?d.transactions_count:(d.transaction_count!=null?d.transaction_count:'\u2014'))+'</span>'
-      +(d.is_contract?'<span class="k">Type</span><span class="v">contract</span>':'')
-      +'</div></div>';
-  }catch(e){ expBody().innerHTML = backBar()+errBox(String(e.message||e)); }
+  // pull details + counters in parallel; counters holds tx/transfer/token counts + gas
+  const [d, counters] = await Promise.all([
+    proxySoft('/api/v2/addresses/'+addr),
+    proxySoft('/api/v2/addresses/'+addr+'/counters'),
+  ]);
+  if(!d){ expBody().innerHTML = backBar()+errBox('Could not load this address.'); return; }
+
+  const isWallet = d.is_contract || d.has_decompiled_code || d.is_smart_contract_wallet;
+  const typeLabel = d.is_smart_contract_wallet ? 'Smart contract wallet'
+      : (d.is_contract ? 'Contract' : 'Wallet (EOA)');
+  const ens = d.ens_domain_name || (d.name && /\.eth$/i.test(d.name) ? d.name : null);
+
+  const txCount = (counters && (counters.transactions_count!=null?counters.transactions_count:counters.transaction_count))
+      || d.transactions_count || d.transaction_count;
+  const transferCount = counters && (counters.token_transfers_count!=null?counters.token_transfers_count:counters.transfers_count);
+  const gasUsed = counters && counters.gas_usage_count;
+
+  expBody().innerHTML = backBar()
+    +'<div class="exp-detail">'
+    +'<div class="exp-detail-h">'
+    + (ens?'<div class="exp-ens">'+esc(ens)+'</div>':'')
+    +'<h2>'+esc(addr)+'</h2>'
+    +'<div class="exp-tags"><span class="exp-tag">'+typeLabel+'</span>'
+    + (d.implementations&&d.implementations.length?'<span class="exp-tag">proxy</span>':'')
+    +'</div></div>'
+    +'<div class="exp-kv">'
+    + kvRow('Balance', fmtEth(d.coin_balance))
+    + kvRow('Transactions', fmtNum(txCount))
+    + (transferCount!=null?kvRow('Token transfers', fmtNum(transferCount)):'')
+    + (gasUsed!=null?kvRow('Gas used', fmtNum(gasUsed)):'')
+    + (d.implementations&&d.implementations[0]?kvRow('Delegated to', addrLink(d.implementations[0])):'')
+    +'</div>'
+    +'<div class="exp-tabs" id="addrTabs">'
+    +'<button class="exp-tab active" data-tab="txns">Transactions</button>'
+    +'<button class="exp-tab" data-tab="tokens">Tokens</button>'
+    +'<button class="exp-tab" data-tab="transfers">Token transfers</button>'
+    +'</div>'
+    +'<div id="addrTabBody">'+loading()+'</div>'
+    +'</div>';
+
+  const tabBody = () => document.getElementById('addrTabBody');
+  const loadTab = async (tab) => {
+    tabBody().innerHTML = loading();
+    if(tab==='txns'){
+      const t = await proxySoft('/api/v2/addresses/'+addr+'/transactions');
+      const items = t && (t.items||t) || [];
+      tabBody().innerHTML = items.length ? items.slice(0,25).map(tx=>{
+        const ok=(tx.status==='ok'||tx.result==='success');
+        const out = addrHash(tx.from)===addr.toLowerCase();
+        return '<div class="exp-lrow" onclick="showTx(\''+tx.hash+'\')">'
+          +'<span class="lead">'+shortHash(tx.hash)+'</span>'
+          +'<span class="dir '+(out?'dir-out':'dir-in')+'">'+(out?'OUT':'IN')+'</span>'
+          +'<span class="mid">'+(out?'To ':'From ')+shortAddr(out?addrHash(tx.to):addrHash(tx.from))+'</span>'
+          +'<span class="val">'+fmtEth(tx.value)+'</span>'
+          +'<span class="tail">'+fmtAge(tx.timestamp)+'</span>'
+          +'<span class="pill '+(ok?'pill-ok':'pill-fail')+'">'+(ok?'ok':'fail')+'</span></div>';
+      }).join('') : '<div class="exp-empty">no transactions</div>';
+    } else if(tab==='tokens'){
+      const t = await proxySoft('/api/v2/addresses/'+addr+'/token-balances');
+      const items = t && (Array.isArray(t)?t:(t.items||[])) || [];
+      tabBody().innerHTML = items.length ? items.slice(0,50).map(tb=>{
+        const tok=tb.token||{};
+        const dec=Number(tok.decimals||18); let bal='\u2014';
+        try{ const v=BigInt(String(tb.value||'0')); bal=(v/(10n**BigInt(dec))).toLocaleString(); }catch(e){}
+        return '<div class="exp-lrow" onclick="showAddress(\''+(tok.address||tok.address_hash||'')+'\')">'
+          +'<span class="lead">'+esc(tok.symbol||tok.name||'?')+'</span>'
+          +'<span class="mid">'+esc(tok.name||'')+'</span>'
+          +'<span class="val">'+bal+'</span></div>';
+      }).join('') : '<div class="exp-empty">no tokens</div>';
+    } else if(tab==='transfers'){
+      const t = await proxySoft('/api/v2/addresses/'+addr+'/token-transfers');
+      const items = t && (t.items||t) || [];
+      tabBody().innerHTML = items.length ? items.slice(0,25).map(tr=>{
+        const tok=tr.token||{};
+        return '<div class="exp-lrow" onclick="showTx(\''+(tr.tx_hash||tr.transaction_hash||'')+'\')">'
+          +'<span class="lead">'+esc(tok.symbol||'?')+'</span>'
+          +'<span class="mid">'+shortAddr(addrHash(tr.from))+' \u2192 '+shortAddr(addrHash(tr.to))+'</span>'
+          +'<span class="tail">'+fmtAge(tr.timestamp)+'</span></div>';
+      }).join('') : '<div class="exp-empty">no token transfers</div>';
+    }
+  };
+  document.querySelectorAll('#addrTabs .exp-tab').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('#addrTabs .exp-tab').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      loadTab(btn.getAttribute('data-tab'));
+    });
+  });
+  loadTab('txns');
 }
+
+// ---- TRANSACTION view ----
 async function showTx(hash){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
   expBody().innerHTML = backBar()+loading();
-  try{
-    const d = await proxy('/api/v2/transactions/'+hash);
-    const ok = (d.status==='ok'||d.result==='success');
-    expBody().innerHTML = backBar()
-      +'<div class="exp-detail"><h2>'+shortHash(hash)+'</h2>'
-      +'<div class="exp-kv">'
-      +'<span class="k">Status</span><span class="v">'+(ok?'success':(d.status||d.result||'\u2014'))+'</span>'
-      +'<span class="k">From</span><span class="v">'+((d.from&&d.from.hash)||d.from||'\u2014')+'</span>'
-      +'<span class="k">To</span><span class="v">'+((d.to&&d.to.hash)||d.to||'\u2014')+'</span>'
-      +'<span class="k">Value</span><span class="v">'+(d.value!=null?d.value:'\u2014')+'</span>'
-      +'<span class="k">Block</span><span class="v">'+(d.block!=null?d.block:(d.block_number!=null?d.block_number:'\u2014'))+'</span>'
-      +'</div></div>';
-  }catch(e){ expBody().innerHTML = backBar()+errBox(String(e.message||e)); }
+  const d = await proxySoft('/api/v2/transactions/'+hash);
+  if(!d){ expBody().innerHTML = backBar()+errBox('Could not load this transaction.'); return; }
+  const ok=(d.status==='ok'||d.result==='success');
+  expBody().innerHTML = backBar()
+    +'<div class="exp-detail">'
+    +'<div class="exp-detail-h"><h2>'+esc(hash)+'</h2>'
+    +'<div class="exp-tags"><span class="exp-tag '+(ok?'tag-ok':'tag-fail')+'">'+(ok?'Success':'Failed')+'</span>'
+    +(d.method?'<span class="exp-tag">'+esc(d.method)+'</span>':'')+'</div></div>'
+    +'<div class="exp-kv">'
+    + kvRow('Block', d.block!=null?('<a class="exp-link" onclick="showBlock(\''+(d.block)+'\')">'+d.block+'</a>'):(d.block_number!=null?d.block_number:'\u2014'))
+    + kvRow('From', addrLink(d.from))
+    + kvRow('To', addrLink(d.to))
+    + kvRow('Value', fmtEth(d.value))
+    + kvRow('Fee', d.fee&&d.fee.value!=null?fmtEth(d.fee.value):(d.transaction_fee!=null?fmtEth(d.transaction_fee):'\u2014'))
+    + kvRow('Gas used', fmtNum(d.gas_used))
+    + kvRow('Nonce', d.nonce!=null?d.nonce:'\u2014')
+    + kvRow('Time', d.timestamp?esc(d.timestamp)+' ('+fmtAge(d.timestamp)+')':'\u2014')
+    +'</div></div>';
 }
+
+// ---- BLOCK view ----
 async function showBlock(num){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
   expBody().innerHTML = backBar()+loading();
-  try{
-    const d = await proxy('/api/v2/blocks/'+num);
-    expBody().innerHTML = backBar()
-      +'<div class="exp-detail"><h2>Block #'+(d.height!=null?d.height:num)+'</h2>'
-      +'<div class="exp-kv">'
-      +'<span class="k">Txns</span><span class="v">'+(d.transactions_count!=null?d.transactions_count:(d.tx_count||'\u2014'))+'</span>'
-      +'<span class="k">Time</span><span class="v">'+(d.timestamp||'\u2014')+'</span>'
-      +'<span class="k">Gas used</span><span class="v">'+(d.gas_used!=null?d.gas_used:'\u2014')+'</span>'
-      +'</div></div>';
-  }catch(e){ expBody().innerHTML = backBar()+errBox(String(e.message||e)); }
+  const d = await proxySoft('/api/v2/blocks/'+num);
+  if(!d){ expBody().innerHTML = backBar()+errBox('Could not load this block.'); return; }
+  const h=(d.height!=null?d.height:num);
+  expBody().innerHTML = backBar()
+    +'<div class="exp-detail">'
+    +'<div class="exp-detail-h"><h2>Block #'+h+'</h2></div>'
+    +'<div class="exp-kv">'
+    + kvRow('Transactions', fmtNum(d.transactions_count!=null?d.transactions_count:(d.tx_count)))
+    + kvRow('Time', d.timestamp?esc(d.timestamp)+' ('+fmtAge(d.timestamp)+')':'\u2014')
+    + kvRow('Gas used', fmtNum(d.gas_used))
+    + kvRow('Gas limit', fmtNum(d.gas_limit))
+    + kvRow('Miner', d.miner?addrLink(d.miner):'\u2014')
+    + kvRow('Hash', d.hash?'<span style="word-break:break-all">'+esc(d.hash)+'</span>':'\u2014')
+    +'</div>'
+    +'<div class="exp-tabs"><button class="exp-tab active">Transactions in block</button></div>'
+    +'<div id="blockTxns">'+loading()+'</div></div>';
+  const bt = await proxySoft('/api/v2/blocks/'+h+'/transactions');
+  const items = bt && (bt.items||bt) || [];
+  const el=document.getElementById('blockTxns');
+  if(el) el.innerHTML = items.length ? items.slice(0,25).map(tx=>{
+    const ok=(tx.status==='ok'||tx.result==='success');
+    return '<div class="exp-lrow" onclick="showTx(\''+tx.hash+'\')">'
+      +'<span class="lead">'+shortHash(tx.hash)+'</span>'
+      +'<span class="mid">'+shortAddr(addrHash(tx.from))+' \u2192 '+shortAddr(addrHash(tx.to))+'</span>'
+      +'<span class="val">'+fmtEth(tx.value)+'</span>'
+      +'<span class="pill '+(ok?'pill-ok':'pill-fail')+'">'+(ok?'ok':'fail')+'</span></div>';
+  }).join('') : '<div class="exp-empty">no transactions</div>';
 }
+
+// ---- SEARCH ----
 async function showSearch(q){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
   expBody().innerHTML = backBar()+loading();
-  try{
-    const d = await proxy('/api/v2/search', q);
-    const items = (d.items||d||[]);
-    expBody().innerHTML = backBar()
-      +'<div class="exp-panel"><div class="exp-panel-h"><span class="t">Results for "'+q+'"</span></div>'
-      +(items.length ? items.slice(0,20).map(it=>
-        '<div class="exp-row"><span class="lead">'+(it.type||'?')+'</span>'
-        +'<span class="mid">'+(it.name||it.address||it.block_hash||it.tx_hash||JSON.stringify(it).slice(0,40))+'</span></div>').join('')
-        : '<div class="exp-empty">no results</div>')
-      +'</div>';
-  }catch(e){ expBody().innerHTML = backBar()+errBox(String(e.message||e)); }
+  const d = await proxySoft('/api/v2/search', q);
+  const items = d && (d.items||d||[]) || [];
+  expBody().innerHTML = backBar()
+    +'<div class="exp-panel"><div class="exp-panel-h"><span class="t">Results for "'+esc(q)+'"</span></div>'
+    +(items.length ? items.slice(0,25).map(it=>{
+      const type=it.type||'?';
+      const label=it.name||it.address||it.address_hash||it.block_hash||it.tx_hash||it.transaction_hash||'';
+      const click = type==='address'||type==='contract'||type==='token' ? 'showAddress(\''+(it.address||it.address_hash)+'\')'
+        : type==='transaction' ? 'showTx(\''+(it.tx_hash||it.transaction_hash)+'\')'
+        : type==='block' ? 'showBlock(\''+(it.block_number||it.block_hash)+'\')' : '';
+      return '<div class="exp-lrow"'+(click?' onclick="'+click+'"':'')+'>'
+        +'<span class="dir dir-in">'+esc(type)+'</span>'
+        +'<span class="mid">'+esc(String(label))+'</span></div>';
+    }).join('') : '<div class="exp-empty">no results</div>')
+    +'</div>';
 }
 
 boot();
