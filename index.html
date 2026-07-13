@@ -181,6 +181,32 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .finding.open .fbody{max-height:400px}
 .fnote{padding:0 16px 14px;font-size:12px;line-height:1.6;color:var(--fg-dim)}
 .fdetail{padding:2px 16px 8px;font-family:var(--mono);font-size:11px;color:var(--fg-faint)}
+
+/* ---- desktop two-column dashboard (mobile unchanged) ---- */
+.resultgrid{display:block}
+@media(min-width:900px){
+  .wrap{max-width:1120px;padding-left:28px;padding-right:28px}
+  .resultgrid{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
+    grid-auto-flow:row dense;
+    gap:12px;
+    align-items:start;
+  }
+  .resultgrid > .span2{grid-column:1 / -1}
+  .resultgrid > [data-col="l"]{grid-column:1}
+  .resultgrid > [data-col="r"]{grid-column:2}
+  .resultgrid > .card,.resultgrid > .statrow{margin-top:0}
+  /* the header input area also breathes wider on desktop */
+  .scanbox{max-width:720px}
+  .banner .big{font-size:34px}
+  /* chart taller on desktop */
+  .spark-svg{height:80px}
+  #bubbles{max-height:420px}
+}
+@media(min-width:1200px){
+  .wrap{max-width:1200px}
+}
 </style>
 </head>
 <body>
@@ -456,7 +482,7 @@ async function fetchMarket(addr,totalSupply,dec){
       txns:((use.txns&&use.txns.h24)||{}),
       volH1:((use.volume&&use.volume.h1)||0),
       name:((use.baseToken&&use.baseToken.name)||''),
-      sym:((use.baseToken&&use.baseToken.symbol)||''),
+      sym:(((use.baseToken&&use.baseToken.symbol)||'').replace(/^\$+/,'')),
       logo:((use.info&&use.info.imageUrl)||null)};
   }catch(e){return null;}
 }
@@ -1595,32 +1621,36 @@ function renderVerdict(d) {
 function render(d) {
   const v = VMAP[d.verdict.label] || VMAP.unknown;
   const sig = d.sig;
+  const appUrl = location.origin + location.pathname + '?token=' + d.addr;
+  const shareUrl = location.origin + '/s/' + d.addr;
   // The /s/<token> endpoint serves per-token OG tags (chart image) to crawlers,
   // then redirects real users to the scanner. Falls back to ?token= if the
   // static-only deploy has no serverless functions.
-  const appUrl = location.origin + location.pathname + '?token=' + d.addr;
-  const shareUrl = location.origin + '/s/' + d.addr;
-  let h = '';
+  // Cards are emitted in the SAME order as before (so mobile is unchanged).
+  // Each is tagged col="l" or col="r"; CSS distributes them into two columns
+  // ONLY on desktop. On mobile they stay in this natural top-to-bottom order.
+  let cards = '';
 
-  h += '<div class="banner ' + v.cls + '"><div class="big">' + esc(v.big) + '</div>'
+  // verdict banner — full width on both
+  cards += '<div class="banner ' + v.cls + ' span2"><div class="big">' + esc(v.big) + '</div>'
     + '<div class="bsub">' + esc(d.verdict.why || v.sub) + '</div></div>';
 
   if (sig) {
-    h += '<div class="card ' + (SIG_CLS[sig.tone] || 'sig-muted') + '">'
+    cards += '<div class="card ' + (SIG_CLS[sig.tone] || 'sig-muted') + '" data-col="l">'
       + '<div class="sig-h"><span class="sig-dot"></span><span class="sig-title">' + esc(sig.head) + '</span></div>'
       + '<div class="sig-body">' + esc(sig.body) + '</div>'
       + '<div id="sigLevels">' + (sig.levels ? levelsHtml(sig.levels) : '') + '</div></div>';
   }
 
   if (d.mkt) {
-    h += '<div class="statrow">'
+    cards += '<div class="statrow" data-col="r">'
       + stat('Market cap', money(d.mkt.mcap)) + stat('24h volume', money(d.mkt.vol))
       + stat('Liquidity', money(d.mkt.liq)) + stat('Price', fmtPrice(d.mkt.price)) + '</div>';
   }
 
-  h += '<div class="card chartcard"><div class="chart-h">Recent price trend</div><div id="scanChart"><div class="cload">\u2026</div></div></div>';
+  cards += '<div class="card chartcard" data-col="r"><div class="chart-h">Recent price trend</div><div id="scanChart"><div class="cload">\u2026</div></div></div>';
 
-  h += '<div class="card tokcard">'
+  cards += '<div class="card tokcard" data-col="l">'
     + '<div class="tokhead">'
     + (d.mkt && d.mkt.logo ? '<img class="toklogo" src="' + esc(d.mkt.logo) + '" alt="" onerror="this.style.display=\'none\'">' : '<div class="toklogo-ph">' + esc((d.sym || '?').slice(0, 3).toUpperCase()) + '</div>')
     + '<div><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '</div>'
@@ -1629,19 +1659,20 @@ function render(d) {
     + '<div class="toklinks">' + tlink('Explorer', SCOUT + '/token/' + d.addr)
     + tlink('DexScreener', 'https://dexscreener.com/robinhood/' + d.addr) + '</div></div>';
 
-  // bubble map (holder distribution)
   if (d.mH && d.mH.bubbles && d.mH.bubbles.length) {
-    h += '<div class="card bubcard"><div class="chart-h">Holder map</div>'
+    cards += '<div class="card bubcard" data-col="r"><div class="chart-h">Holder map</div>'
       + renderBubbles(d.mH.bubbles, d.mH.edges) + '</div>';
   }
 
-  h += '<div class="card">' + renderFindings(d) + '</div>';
+  cards += '<div class="card" data-col="l">' + renderFindings(d) + '</div>';
 
   const tweet = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(
     (d.sym ? '$' + d.sym : 'This token') + ' \u2014 ' + v.big + (sig ? ' \u00b7 ' + sig.head : '') + '\n\nScanned with RobinScan'
   ) + '&url=' + encodeURIComponent(shareUrl);
-  h += '<div class="sharebar"><a class="sharebtn" href="' + tweet + '" target="_blank" rel="noopener">Share on X</a>'
+  cards += '<div class="sharebar span2"><a class="sharebtn" href="' + tweet + '" target="_blank" rel="noopener">Share on X</a>'
     + '<button class="sharebtn" id="copyShare">Copy link</button></div>';
+
+  const h = '<div class="resultgrid">' + cards + '</div>';
 
   $('result').innerHTML = h;
   const cs = $('copyShare');
