@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>RobinScan Members — Explorer access</title>
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAABdmlDQ1BJQ0MgUHJvZmlsZQAAeJylkLFLw0AYxV9bRdFKBx0cHDIUB2lB6uKodShIKaVWsOqSpEkrJG1IUkQcHVw7dFFxsYr/gW7iPyAIgjq56OygIIKU+K4pxKGd/MLd9+PdvcvdA8JNQzWdoXnArLl2IZOWNkqbEv6UrDrWcj6fxcD6ekRI9IekOGvwvr41XtYcFQiNkhdVy3bJS+TcrmsJbpKn1KpcJp+TEzYvSL4XuuLzm+CKz9+C7WJhBQhHyVLF54RgxWfxFkmt2ibZIMdNo6H27iNeEtVq62vsM93hoIAM0pCgoIEdGHCRZK8xs/6+VNeXQ50elbOFPdh0VFClN0G1wVM1dp26xs/gDlaQfZCpoy+k/D9EV4HhV8/7nANGToDOoef9nHlepw1EnoHbVuCvtxjnO/VmoMVPgdgBcHUTaMoFcM2Mp18s2Za7UoQjrOvAxyUwUQImmfXY1n/X/bx762g/AcV9IHsHHB0Ds9wf2/4F9IxzaxM+sS0AAAAwUExURWHbKVG6JkCZICxwGRxOExM6EBA1Dw8yDw4wDw0tDgwoDQslDQskDQkiDQccDAQWCuvTKPAAAAIGSURBVHjaBcFdSFNRAAfw/7n3EBTt3nNci8qcc01otE3mfIpMSRAfGmGjomiRfRBREfTQW/RBD5EPfTACCdprEFmEi0pljYqeSjahh3JtczPKdOfcO/Zg4j39fmRMybqg4XF4et93tDBOIYVorI5KkLmTOQKiKSHsf1n3+UfRpftdQigKiMi9eLqEoXWhiTYuqRD6k97RaWIWG7Pe4wWuQe1eeVZgjPi9k+mUAJWN9McP3CwzydWOxb6apjYuuHzKYuBo5E+8ElS1BXM+OBoTylG3Ojm1pyYtDlVXIib439UItW2jfg44tj12R2KlneHMlu82AHd9GEDrzUHN3JwvAVg++gJAYKRBfVy/rp+qP1/SEsBhDqpAynRMuRV5avEfkFQCcueRNdk/swn6NwBX+t6xGKA3GYBkNUgZWiUjPPTm9kv1pcJAiTTInmJzqrbvguNmitGKo8gl/8hEqgxlX5MGtX5niWvAeZCXgKflskl1o7tnvhr91A/gbqFymjreudcl19uhxyaTy7vm89QM3bgYldbnVASyPeixyNVS9ldVCLtLchQeergGEj47A3ilFGuDsybXuNmdOVCCFKq+sD9gcw28Fh44KAB4AoWkD5RLw5iOZwR4JtGT8zNKwEvD4wG/+VN6vBqIBk5YLWEWv1qdey3GoMfXK+IsHtq6Idn804Ft+A9M5OB5n6JLwQAAAABJRU5ErkJggg==">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#080908;--surface:#0f110f;--surface-2:#171a17;--line:#242824;
+  --fg:#fff;--fg-dim:#9aa09a;--fg-faint:#5f655f;
+  --green:#00c805;--green-dim:#0a4512;--red:#ff5252;--amber:#ffb020;
+  --r:16px;--mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:560px;margin:0 auto;padding:48px 18px 60px;min-height:100vh}
+.brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px}
+.logo{width:38px;height:38px;border-radius:50%}
+.name{font-size:23px;font-weight:800;letter-spacing:-.02em}
+.members-badge{font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--green);
+  border:1px solid var(--green-dim);border-radius:5px;padding:3px 7px;text-transform:uppercase}
+.sub{text-align:center;color:var(--fg-dim);font-size:13.5px;margin:0 0 30px}
+.gate{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:26px 22px;animation:rise .3s ease}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.gate-h{font-size:19px;font-weight:800;letter-spacing:-.01em;margin:0 0 6px}
+.gate-p{font-size:13.5px;color:var(--fg-dim);line-height:1.6;margin:0 0 20px}
+.req{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:11px;margin-bottom:18px}
+.req-ico{width:18px;height:18px;color:var(--green);flex:none}
+.req-t{font-size:13px}.req-t b{color:var(--fg)}
+.btn{width:100%;background:var(--green);color:#000;border:none;border-radius:12px;padding:15px;
+  font-weight:800;font-size:15.5px;cursor:pointer;font-family:inherit;letter-spacing:-.01em;
+  transition:transform .1s,filter .15s;display:flex;align-items:center;justify-content:center;gap:9px;text-decoration:none}
+.btn:hover{filter:brightness(1.07)}.btn:active{transform:scale(.99)}
+.btn:disabled{opacity:.7;cursor:default}
+.btn-ghost{background:var(--surface-2);color:var(--fg);border:1px solid var(--line)}
+.btn-ghost:hover{border-color:var(--green-dim);filter:none}
+.spin{width:15px;height:15px;border:2px solid rgba(0,0,0,.35);border-top-color:#000;border-radius:50%;animation:sp .55s linear infinite}
+.btn-ghost .spin{border-color:rgba(255,255,255,.3);border-top-color:#fff}
+@keyframes sp{to{transform:rotate(360deg)}}
+.disclosure{margin-top:16px;padding:13px 15px;background:linear-gradient(180deg,rgba(0,200,5,.05),rgba(0,200,5,.01));
+  border:1px solid rgba(0,200,5,.22);border-radius:12px;display:flex;gap:11px;align-items:flex-start}
+.disclosure svg{width:19px;height:19px;color:var(--green);flex:none;margin-top:1px}
+.disclosure-t{font-size:11.8px;color:var(--fg-dim);line-height:1.6}
+.disclosure-t b{color:var(--fg)}
+.status{margin-top:16px;font-size:12.5px;color:var(--fg-faint);text-align:center;min-height:18px;font-family:var(--mono)}
+.status.err{color:var(--red)}
+.short{margin-top:16px;padding:16px;background:rgba(255,176,32,.06);border:1px solid rgba(255,176,32,.28);border-radius:12px}
+.short-h{font-size:14px;font-weight:700;color:var(--amber);margin-bottom:5px}
+.short-p{font-size:12.5px;color:var(--fg-dim);line-height:1.55;margin-bottom:12px}
+.short-p .mono{font-family:var(--mono);color:var(--fg)}
+.member{text-align:center;padding:34px 22px;background:linear-gradient(180deg,rgba(0,200,5,.07),var(--surface));
+  border:1px solid rgba(0,200,5,.3);border-radius:var(--r);animation:rise .3s ease}
+.member-check{width:52px;height:52px;margin:0 auto 14px;color:var(--green)}
+.member-h{font-size:22px;font-weight:900;letter-spacing:-.02em}
+.member-addr{font-family:var(--mono);font-size:12px;color:var(--fg-dim);margin-top:6px}
+.member-p{font-size:13px;color:var(--fg-dim);margin-top:12px;line-height:1.6}
+.member-actions{display:flex;gap:8px;margin-top:20px}
+.member-actions .btn{flex:1}
+.foot{text-align:center;font-size:11px;color:var(--fg-faint);margin-top:26px;line-height:1.55}
+.foot a{color:var(--fg-dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <img class="logo" src="data:image/webp;base64,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" alt="">
+    <div class="name">Robin<span style="color:var(--green)">Scan</span></div>
+    <span class="members-badge">Members</span>
+  </div>
+  <p class="sub">Holder-only tools for the Robinhood Chain ecosystem.</p>
+  <div id="view"></div>
+  <div class="foot">
+    The scanner stays free and open at <a href="/">robinscan4u.com</a> — no wallet, no signature.<br>
+    Members tools require holding $ROBINSCAN. Not affiliated with Robinhood Markets, Inc.
+  </div>
+</div>
+<script>
+const TOKEN_CA='0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a';
+const THRESHOLD_LABEL='100,000';
+const BUY_URL='https://dexscreener.com/robinhood/'+TOKEN_CA;
+const SESSION_KEY='rs_members_session';
+const $=id=>document.getElementById(id);
+const view=$('view');
+
+const ICON_SHIELD='<svg viewBox="0 0 24 24" fill="none"><path d="M12 2.5 4.5 5.8v5.4c0 4.6 3.2 8.9 7.5 10.3 4.3-1.4 7.5-5.7 7.5-10.3V5.8L12 2.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m8.8 12.1 2.2 2.2 4.2-4.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.6"/><path d="m8 12.2 2.6 2.6L16 9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function short(a){return a?a.slice(0,7)+'\u2026'+a.slice(-5):'';}
+
+function renderGate(){
+  view.innerHTML=
+    '<div class="gate">'
+    +'<h1 class="gate-h">Enter the members area</h1>'
+    +'<p class="gate-p">Connect your wallet and sign a message to prove you hold $ROBINSCAN. This unlocks the explorer and every members tool.</p>'
+    +'<div class="req"><span class="req-ico">'+ICON_SHIELD+'</span>'
+    +'<div class="req-t">Requires <b>'+THRESHOLD_LABEL+' $ROBINSCAN</b> in your wallet</div></div>'
+    +'<button class="btn" id="connectBtn">Connect wallet</button>'
+    +'<div class="disclosure">'+ICON_SHIELD
+    +'<div class="disclosure-t"><b>You will sign a message, not a transaction.</b> Signing is free, uses no gas, and cannot move your funds or approve spending. RobinScan never requests a transaction or token approval.</div></div>'
+    +'<div class="status" id="status"></div>'
+    +'</div>';
+  $('connectBtn').addEventListener('click',connectAndVerify);
+}
+
+function setStatus(msg,isErr){const s=$('status');if(s){s.textContent=msg||'';s.className='status'+(isErr?' err':'');}}
+
+async function connectAndVerify(){
+  const btn=$('connectBtn');
+  if(!window.ethereum){setStatus('No wallet found. Install MetaMask or another browser wallet.',true);return;}
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span> Connecting\u2026';
+  try{
+    const accounts=await window.ethereum.request({method:'eth_requestAccounts'});
+    const address=(accounts&&accounts[0]||'').toLowerCase();
+    if(!address){throw new Error('No account selected');}
+    setStatus('Requesting sign-in message\u2026');
+    const nRes=await fetch('/api/auth/nonce?address='+address);
+    const nData=await nRes.json();
+    if(!nRes.ok){throw new Error(nData.error||'Could not start sign-in');}
+    btn.innerHTML='<span class="spin"></span> Check your wallet\u2026';
+    setStatus('Sign the message in your wallet to continue\u2026');
+    const signature=await window.ethereum.request({method:'personal_sign',params:[nData.message,address]});
+    btn.innerHTML='<span class="spin"></span> Verifying holdings\u2026';
+    setStatus('Checking your $ROBINSCAN balance\u2026');
+    const vRes=await fetch('/api/auth/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address,signature})});
+    const vData=await vRes.json();
+    if(vRes.status===403&&vData.error==='insufficient_holdings'){renderShort(vData,address);return;}
+    if(!vRes.ok){throw new Error(vData.error||'Verification failed');}
+    localStorage.setItem(SESSION_KEY,JSON.stringify({token:vData.token,address,ts:Date.now()}));
+    renderMember(address);
+  }catch(e){
+    const m=(e&&e.message)||String(e);
+    if(/reject|denied|user denied/i.test(m)){setStatus('Sign-in cancelled. Nothing was sent.',false);}
+    else{setStatus(m,true);}
+    btn.disabled=false;btn.textContent='Connect wallet';
+  }
+}
+
+function renderShort(data,address){
+  view.innerHTML=
+    '<div class="gate">'
+    +'<h1 class="gate-h">Almost there</h1>'
+    +'<p class="gate-p">Your wallet is connected, but it doesn\u2019t hold enough $ROBINSCAN yet.</p>'
+    +'<div class="short">'
+    +'<div class="short-h">You need more $ROBINSCAN</div>'
+    +'<div class="short-p">You hold <span class="mono">'+(data.have||0).toLocaleString()+'</span> \u00b7 '
+    +'entry requires <span class="mono">'+(data.need||100000).toLocaleString()+'</span>. '
+    +'You\u2019re <span class="mono">'+(data.short||0).toLocaleString()+'</span> short.</div>'
+    +'<a class="btn" href="'+BUY_URL+'" target="_blank" rel="noopener">Get $ROBINSCAN</a>'
+    +'</div>'
+    +'<button class="btn btn-ghost" id="retryBtn" style="margin-top:10px">Check again</button>'
+    +'</div>';
+  $('retryBtn').addEventListener('click',connectAndVerify);
+}
+
+function renderMember(address){
+  view.innerHTML=
+    '<div class="member">'
+    +'<span class="member-check">'+ICON_CHECK+'</span>'
+    +'<div class="member-h">You\u2019re in</div>'
+    +'<div class="member-addr">'+short(address)+'</div>'
+    +'<div class="member-p">Verified $ROBINSCAN holder. Your session lasts 6 hours.<br>The explorer is coming online here \u2014 this is the members home.</div>'
+    +'<div class="member-actions">'
+    +'<button class="btn" id="exploreBtn" disabled>Open explorer (soon)</button>'
+    +'<button class="btn btn-ghost" id="signOutBtn">Sign out</button>'
+    +'</div>'
+    +'</div>';
+  $('signOutBtn').addEventListener('click',function(){localStorage.removeItem(SESSION_KEY);boot();});
+}
+
+async function boot(){
+  const raw=localStorage.getItem(SESSION_KEY);
+  if(raw){
+    try{
+      const s=JSON.parse(raw);
+      const r=await fetch('/api/x/me',{headers:{authorization:'Bearer '+s.token}});
+      if(r.ok){const d=await r.json();renderMember(d.address);return;}
+      localStorage.removeItem(SESSION_KEY);
+    }catch(e){localStorage.removeItem(SESSION_KEY);}
+  }
+  renderGate();
+}
+boot();
+</script>
+</body>
+</html>

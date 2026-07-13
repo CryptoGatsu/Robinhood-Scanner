@@ -2,6 +2,7 @@
   "functions": { "api/scan.js": { "maxDuration": 30 } },
   "rewrites": [
     { "source": "/s/:id", "destination": "/api/s/:id" },
-    { "source": "/og/:id", "destination": "/api/og/:id" }
+    { "source": "/og/:id", "destination": "/api/og/:id" },
+    { "source": "/members", "destination": "/members.html" }
   ]
 }
