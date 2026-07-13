@@ -21,6 +21,10 @@ html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);
   font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
 .wrap{max-width:560px;margin:0 auto;padding:48px 18px 60px;min-height:100vh}
+/* when the explorer is active, allow a wider desktop layout (mobile unchanged) */
+@media(min-width:900px){
+  body.exploring .wrap{max-width:1200px}
+}
 .brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px}
 .logo{width:38px;height:38px;border-radius:50%}
 .name{font-size:23px;font-weight:800;letter-spacing:-.02em}
@@ -122,7 +126,7 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .member-signout:hover{border-color:var(--green-dim);color:var(--fg)}
 
 /* ---- explorer ---- */
-.exp-wrap{max-width:960px;margin:0 auto;padding:0 4px}
+.exp-wrap{max-width:1180px;margin:0 auto;padding:0 4px}
 .exp-top{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .exp-badge{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg-dim);
   background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:7px 11px}
@@ -189,6 +193,21 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .dir{font-size:9.5px;font-weight:800;padding:2px 6px;border-radius:4px;flex:none;letter-spacing:.04em}
 .dir-out{background:rgba(255,176,32,.14);color:var(--amber)}
 .dir-in{background:rgba(0,200,5,.12);color:var(--green)}
+
+.stats-carousel{display:flex;align-items:stretch;gap:8px;background:var(--surface);border:1px solid var(--line);
+  border-radius:14px;padding:8px;margin-bottom:14px;min-height:132px}
+.sarrow{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:10px;
+  width:40px;flex:none;font-size:22px;cursor:pointer;font-family:inherit;transition:.12s}
+.sarrow:hover{color:var(--green);border-color:var(--green-dim)}
+.sslide{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 8px;text-align:center}
+.slabel{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-faint)}
+.svalue{font-size:34px;font-weight:900;letter-spacing:-.03em;color:var(--fg);margin:4px 0 2px;line-height:1;font-family:var(--mono)}
+.ssub{font-size:12px;color:var(--fg-dim)}
+.sbars{display:flex;align-items:flex-end;gap:2px;height:38px;margin-top:12px;width:min(320px,80%)}
+.sbar{flex:1;border-radius:2px 2px 0 0;opacity:.85;min-height:3px}
+.sdots{display:flex;gap:6px;margin-top:12px}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--line)}
+.sdot.on{background:var(--green)}
 </style>
 </head>
 <body>
@@ -220,6 +239,7 @@ const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r
 function short(a){return a?a.slice(0,7)+'\u2026'+a.slice(-5):'';}
 
 function renderGate(){
+  document.body.classList.remove("exploring");
   view.innerHTML=
     '<div class="gate">'
     +'<h1 class="gate-h">Enter the members area</h1>'
@@ -344,6 +364,7 @@ function addrHash(o){ if(!o) return ''; return typeof o==='string'?o:(o.hash||''
 
 // ---- explorer shell ----
 function renderExplorer(address){
+  document.body.classList.add("exploring");
   view.innerHTML =
     '<div class="exp-wrap">'
     +'<div class="exp-top">'
@@ -381,15 +402,81 @@ function kvRow(k,v){ return '<span class="k">'+k+'</span><span class="v">'+v+'</
 function addrLink(o){ const h=addrHash(o); if(!h) return '\u2014'; return '<a class="exp-link" onclick="showAddress(\''+h+'\')">'+esc(addrField(o))+'</a>'; }
 function txLink(h){ return h?'<a class="exp-link" onclick="showTx(\''+h+'\')">'+shortHash(h)+'</a>':'\u2014'; }
 
+// ---- stats carousel (landing top) ----
+let statsIdx=0, statsSlides=[], statsData=null;
+
+function statNum(n){ if(n==null||n==='') return '\u2014'; const x=Number(n); return isFinite(x)?x.toLocaleString():String(n); }
+function statUsd(n){ if(n==null||n==='') return '\u2014'; const x=Number(n); if(!isFinite(x)) return String(n);
+  if(x>=1e9) return '$'+(x/1e9).toFixed(2)+'B'; if(x>=1e6) return '$'+(x/1e6).toFixed(2)+'M';
+  if(x>=1e3) return '$'+(x/1e3).toFixed(1)+'K'; return '$'+x.toFixed(2); }
+
+// mini bar chart from an array of {date,value} or numbers
+function miniBars(series, color){
+  if(!series || !series.length) return '';
+  const vals = series.map(p=>Number(p.value!=null?p.value:p)).filter(v=>isFinite(v));
+  if(!vals.length) return '';
+  const max = Math.max(...vals,1);
+  const bars = vals.slice(-24).map(v=>{
+    const h = Math.max(3, (v/max)*100);
+    return '<div class="sbar" style="height:'+h+'%;background:'+(color||'var(--green)')+'"></div>';
+  }).join('');
+  return '<div class="sbars">'+bars+'</div>';
+}
+
+async function loadStats(){
+  statsData = await proxySoft('/api/v2/stats');
+  const txChart = await proxySoft('/api/v2/stats/charts/transactions');
+  const s = statsData || {};
+  const gas = s.gas_prices || {};
+  const txSeries = (txChart && (txChart.chart_data||txChart.chart||txChart)) || [];
+
+  statsSlides = [
+    { label:'Gas tracker', value:(gas.average!=null?gas.average+' Gwei':(gas.slow!=null?gas.slow+' Gwei':'\u2014')),
+      sub:(gas.fast!=null?('fast '+gas.fast+' \u00b7 slow '+(gas.slow!=null?gas.slow:'\u2014')):''), chart:'' },
+    { label:'Transactions today', value:statNum(s.transactions_today), sub:'in the last 24h',
+      chart: miniBars(txSeries,'var(--green)') },
+    { label:'Total transactions', value:statNum(s.total_transactions), sub:'all time', chart:'' },
+    { label:'Total addresses', value:statNum(s.total_addresses), sub:'wallets seen', chart:'' },
+    { label:'Total blocks', value:statNum(s.total_blocks), sub:(s.average_block_time!=null?('~'+(Number(s.average_block_time)/1000).toFixed(1)+'s block time'):''), chart:'' },
+  ];
+  if(s.market_cap!=null && Number(s.market_cap)>0){
+    statsSlides.push({ label:'Market cap', value:statUsd(s.market_cap), sub:(s.coin_price!=null?('coin '+statUsd(s.coin_price)):''), chart:'' });
+  }
+  statsIdx = 0;
+  renderStatsSlide();
+}
+
+function renderStatsSlide(){
+  const host = document.getElementById('statsCarousel');
+  if(!host) return;
+  if(!statsSlides.length){ host.innerHTML = '<div class="exp-empty">stats unavailable</div>'; return; }
+  const sl = statsSlides[statsIdx];
+  const dots = statsSlides.map((_,i)=>'<span class="sdot'+(i===statsIdx?' on':'')+'"></span>').join('');
+  host.innerHTML =
+    '<button class="sarrow" id="sPrev" aria-label="Previous">\u2039</button>'
+    +'<div class="sslide">'
+    +'<div class="slabel">'+sl.label+'</div>'
+    +'<div class="svalue">'+sl.value+'</div>'
+    +(sl.sub?'<div class="ssub">'+sl.sub+'</div>':'')
+    +(sl.chart||'')
+    +'<div class="sdots">'+dots+'</div>'
+    +'</div>'
+    +'<button class="sarrow" id="sNext" aria-label="Next">\u203a</button>';
+  document.getElementById('sPrev').onclick=()=>{ statsIdx=(statsIdx-1+statsSlides.length)%statsSlides.length; renderStatsSlide(); };
+  document.getElementById('sNext').onclick=()=>{ statsIdx=(statsIdx+1)%statsSlides.length; renderStatsSlide(); };
+}
+
 // ---- landing ----
 let landingTimer=null;
 async function renderLanding(){
   if(landingTimer){ clearInterval(landingTimer); landingTimer=null; }
   expBody().innerHTML =
-    '<div class="exp-cols">'
+    '<div class="stats-carousel" id="statsCarousel"><div class="exp-loading">loading stats\u2026</div></div>'
+    +'<div class="exp-cols">'
     +'<div class="exp-panel"><div class="exp-panel-h"><span class="t">Latest blocks</span><span class="live"><span class="dot"></span>live</span></div><div id="expBlocks">'+loading()+'</div></div>'
     +'<div class="exp-panel"><div class="exp-panel-h"><span class="t">Latest transactions</span><span class="live"><span class="dot"></span>live</span></div><div id="expTxns">'+loading()+'</div></div>'
     +'</div>';
+  loadStats();
   const load = async () => {
     try{
       const d = await proxy('/api/v2/main-page/blocks');
@@ -431,9 +518,16 @@ async function showAddress(addr){
   ]);
   if(!d){ expBody().innerHTML = backBar()+errBox('Could not load this address.'); return; }
 
-  const isWallet = d.is_contract || d.has_decompiled_code || d.is_smart_contract_wallet;
-  const typeLabel = d.is_smart_contract_wallet ? 'Smart contract wallet'
-      : (d.is_contract ? 'Contract' : 'Wallet (EOA)');
+  // Type detection. A 7702 smart wallet has code (is_contract=true) but is
+  // really a USER WALLET with delegated code — Blockscout shows "EOA + code".
+  // Signals it's a user wallet: a delegation target (implementations) or an
+  // explicit smart-wallet flag. A plain deployed contract has code but no
+  // delegation and usually no ENS.
+  const hasDelegate = !!(d.implementations && d.implementations.length);
+  const isSmartWallet = d.is_smart_contract_wallet || hasDelegate;
+  const isPlainContract = d.is_contract && !isSmartWallet;
+  const typeLabel = isSmartWallet ? 'Smart wallet (EOA + code)'
+      : (isPlainContract ? 'Contract' : 'Wallet');
   const ens = d.ens_domain_name || (d.name && /\.eth$/i.test(d.name) ? d.name : null);
 
   const txCount = (counters && (counters.transactions_count!=null?counters.transactions_count:counters.transaction_count))
@@ -447,7 +541,7 @@ async function showAddress(addr){
     + (ens?'<div class="exp-ens">'+esc(ens)+'</div>':'')
     +'<h2>'+esc(addr)+'</h2>'
     +'<div class="exp-tags"><span class="exp-tag">'+typeLabel+'</span>'
-    + (d.implementations&&d.implementations.length?'<span class="exp-tag">proxy</span>':'')
+    + (hasDelegate?'<span class="exp-tag">delegated</span>':'')
     +'</div></div>'
     +'<div class="exp-kv">'
     + kvRow('Balance', fmtEth(d.coin_balance))
@@ -482,13 +576,22 @@ async function showAddress(addr){
           +'<span class="pill '+(ok?'pill-ok':'pill-fail')+'">'+(ok?'ok':'fail')+'</span></div>';
       }).join('') : '<div class="exp-empty">no transactions</div>';
     } else if(tab==='tokens'){
-      const t = await proxySoft('/api/v2/addresses/'+addr+'/token-balances');
-      const items = t && (Array.isArray(t)?t:(t.items||[])) || [];
+      // this chain may serve token holdings under either path; try both
+      let t = await proxySoft('/api/v2/addresses/'+addr+'/token-balances');
+      let items = t && (Array.isArray(t)?t:(t.items||t.token_balances||[])) || [];
+      if(!items.length){
+        const t2 = await proxySoft('/api/v2/addresses/'+addr+'/tokens');
+        items = t2 && (Array.isArray(t2)?t2:(t2.items||[])) || [];
+      }
       tabBody().innerHTML = items.length ? items.slice(0,50).map(tb=>{
-        const tok=tb.token||{};
-        const dec=Number(tok.decimals||18); let bal='\u2014';
-        try{ const v=BigInt(String(tb.value||'0')); bal=(v/(10n**BigInt(dec))).toLocaleString(); }catch(e){}
-        return '<div class="exp-lrow" onclick="showAddress(\''+(tok.address||tok.address_hash||'')+'\')">'
+        // handle both {token:{...}, value} and a flat token object
+        const tok = tb.token || tb || {};
+        const rawVal = tb.value!=null?tb.value:(tb.balance!=null?tb.balance:'0');
+        const dec = Number(tok.decimals!=null?tok.decimals:18);
+        let bal='\u2014';
+        try{ const v=BigInt(String(rawVal).split('.')[0]); bal=(v/(10n**BigInt(dec))).toLocaleString(); }catch(e){}
+        const taddr = tok.address || tok.address_hash || '';
+        return '<div class="exp-lrow"'+(taddr?' onclick="showAddress(\''+taddr+'\')"':'')+'>'
           +'<span class="lead">'+esc(tok.symbol||tok.name||'?')+'</span>'
           +'<span class="mid">'+esc(tok.name||'')+'</span>'
           +'<span class="val">'+bal+'</span></div>';

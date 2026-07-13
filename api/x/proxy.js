@@ -16,6 +16,8 @@ const ALLOWED = [
   /^\/api\/v2\/tokens\/[0-9a-fx]+(\/holders|\/counters)?$/i,
   /^\/api\/v2\/search$/,
   /^\/api\/v2\/stats$/,
+  /^\/api\/v2\/stats\/charts\/(transactions|market)$/,
+  /^\/api\/v2\/main-page\/indexing-status$/,
 ];
 
 // short cache TTLs — explorer data is fresh but repeated lookups shouldn't
