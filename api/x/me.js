@@ -1,6 +1,6 @@
 import { json, readSession, balanceOf, THRESHOLD } from '../../lib/gate.js';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'edge' };
 
 // GET /api/x/me  — a gated endpoint. Every explorer data route will follow
 // this exact pattern: read the session, 403 if absent/invalid, then serve.

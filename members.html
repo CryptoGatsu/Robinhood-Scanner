@@ -132,7 +132,7 @@ async function connectAndVerify(){
     const vRes=await fetch('/api/auth/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address,signature})});
     const vData=await vRes.json();
     if(vRes.status===403&&vData.error==='insufficient_holdings'){renderShort(vData,address);return;}
-    if(!vRes.ok){throw new Error(vData.error||'Verification failed');}
+    if(!vRes.ok){throw new Error((vData.error||'verification_failed')+(vData.detail?': '+vData.detail:''));}
     localStorage.setItem(SESSION_KEY,JSON.stringify({token:vData.token,address,ts:Date.now()}));
     renderMember(address);
   }catch(e){
