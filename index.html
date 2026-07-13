@@ -6,6 +6,17 @@
 <title>RobinScan — Robinhood Chain honeypot &amp; rug check</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAABdmlDQ1BJQ0MgUHJvZmlsZQAAeJylkLFLw0AYxV9bRdFKBx0cHDIUB2lB6uKodShIKaVWsOqSpEkrJG1IUkQcHVw7dFFxsYr/gW7iPyAIgjq56OygIIKU+K4pxKGd/MLd9+PdvcvdA8JNQzWdoXnArLl2IZOWNkqbEv6UrDrWcj6fxcD6ekRI9IekOGvwvr41XtYcFQiNkhdVy3bJS+TcrmsJbpKn1KpcJp+TEzYvSL4XuuLzm+CKz9+C7WJhBQhHyVLF54RgxWfxFkmt2ibZIMdNo6H27iNeEtVq62vsM93hoIAM0pCgoIEdGHCRZK8xs/6+VNeXQ50elbOFPdh0VFClN0G1wVM1dp26xs/gDlaQfZCpoy+k/D9EV4HhV8/7nANGToDOoef9nHlepw1EnoHbVuCvtxjnO/VmoMVPgdgBcHUTaMoFcM2Mp18s2Za7UoQjrOvAxyUwUQImmfXY1n/X/bx762g/AcV9IHsHHB0Ds9wf2/4F9IxzaxM+sS0AAAAwUExURWHbKVG6JkCZICxwGRxOExM6EBA1Dw8yDw4wDw0tDgwoDQslDQskDQkiDQccDAQWCuvTKPAAAAIGSURBVHjaBcFdSFNRAAfw/7n3EBTt3nNci8qcc01otE3mfIpMSRAfGmGjomiRfRBREfTQW/RBD5EPfTACCdprEFmEi0pljYqeSjahh3JtczPKdOfcO/Zg4j39fmRMybqg4XF4et93tDBOIYVorI5KkLmTOQKiKSHsf1n3+UfRpftdQigKiMi9eLqEoXWhiTYuqRD6k97RaWIWG7Pe4wWuQe1eeVZgjPi9k+mUAJWN9McP3CwzydWOxb6apjYuuHzKYuBo5E+8ElS1BXM+OBoTylG3Ojm1pyYtDlVXIib439UItW2jfg44tj12R2KlneHMlu82AHd9GEDrzUHN3JwvAVg++gJAYKRBfVy/rp+qP1/SEsBhDqpAynRMuRV5avEfkFQCcueRNdk/swn6NwBX+t6xGKA3GYBkNUgZWiUjPPTm9kv1pcJAiTTInmJzqrbvguNmitGKo8gl/8hEqgxlX5MGtX5niWvAeZCXgKflskl1o7tnvhr91A/gbqFymjreudcl19uhxyaTy7vm89QM3bgYldbnVASyPeixyNVS9ldVCLtLchQeergGEj47A3ilFGuDsybXuNmdOVCCFKq+sD9gcw28Fh44KAB4AoWkD5RLw5iOZwR4JtGT8zNKwEvD4wG/+VN6vBqIBk5YLWEWv1qdey3GoMfXK+IsHtq6Idn804Ft+A9M5OB5n6JLwQAAAABJRU5ErkJggg==">
 <meta name="description" content="Scan any Robinhood Chain token: can you sell it, who holds it, is liquidity locked, and what the momentum says.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="RobinScan — Robinhood Chain token scanner">
+<meta property="og:description" content="Can you sell it, who holds it, is liquidity locked — and what the momentum says.">
+<meta property="og:image" content="https://www.robinscan4u.com/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://www.robinscan4u.com/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RobinScan — Robinhood Chain token scanner">
+<meta name="twitter:description" content="Can you sell it, who holds it, is liquidity locked — and what the momentum says.">
+<meta name="twitter:image" content="https://www.robinscan4u.com/og-card.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -156,6 +167,18 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .bk-burn{color:#7a807a;background:rgba(122,128,122,.12)}
 .bub.sel circle{stroke:#fff;stroke-width:2}
 .bub{cursor:pointer}
+
+.finding{padding:0;border-bottom:1px solid var(--line)}
+.finding:last-child{border-bottom:none}
+.frow{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;gap:12px}
+.finding.fexp .frow{cursor:pointer;user-select:none}
+.finding.fexp .frow:hover{background:var(--surface-2)}
+.fchev{display:inline-block;margin-left:6px;color:var(--fg-faint);font-size:14px;transition:transform .18s}
+.finding.open .fchev{transform:rotate(90deg)}
+.fbody{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.finding.open .fbody{max-height:400px}
+.fnote{padding:0 16px 14px;font-size:12px;line-height:1.6;color:var(--fg-dim)}
+.fdetail{padding:2px 16px 8px;font-family:var(--mono);font-size:11px;color:var(--fg-faint)}
 </style>
 </head>
 <body>
@@ -605,11 +628,13 @@ async function modHoneypot(addr,pool,sampleHolder){
   const code=await getCode(addr);
   if(!code||code==='0x')return{id:'sell',title:'Can you sell it?',status:'fail',findings:[F('fail','Is there a real token here?','No','Nothing is deployed at this address.')]};
   const rt=strip(code),has=s=>rt.includes(s);
+  let simRan=false, simSellBlocked=false, simFrozen=false;
   if(sampleHolder){
     const rand='0x'+kstr('rhscan-'+Date.now()).slice(0,40),amt=pad32(1n);
     let w=null,p=null;
     try{await call(addr,TRANSFER_SEL+padAddr(rand)+amt,sampleHolder);w=true;}catch(e){w=false;}
     if(pool){try{await call(addr,TRANSFER_SEL+padAddr(pool)+amt,sampleHolder);p=true;}catch(e){p=false;}}
+    simRan=true; simFrozen=(w===false); simSellBlocked=(w===true&&pool&&p===false);
     if(w&&pool&&p===false)f.push(F('fail','Honeypot test','FAILED \u2014 can\u2019t sell','A holder can move the token to a normal wallet, but sending it into the trading pool (what selling does) is rejected. Classic honeypot: you can buy, not sell.','holder\u2192wallet \u2713   holder\u2192pool \u2717'));
     else if(w===false)f.push(F('fail','Honeypot test','Transfers frozen','A normal holder can\u2019t even move this token right now.','transfer() reverted'));
     else if(w)f.push(F('pass','Honeypot test','Passed \u2014 sellable','A real holder moved the token'+(pool?' and into the pool':'')+' in a live simulation. Selling isn\u2019t blocked.',pool?'holder\u2192wallet \u2713   holder\u2192pool \u2713':'holder\u2192wallet \u2713'));
@@ -625,7 +650,7 @@ async function modHoneypot(addr,pool,sampleHolder){
   if(owner){if(owner===ZERO||owner===DEAD)f.push(F('pass','Who controls it?','Nobody','Ownership is renounced \u2014 the risky switches can\u2019t be flipped.'));else f.push(F('warn','Who controls it?','One wallet','A single owner still controls this token.','owner \u2192 '+short(owner)));}
   if(!f.some(x=>['fail','warn'].includes(x.sev))&&!proxy)f.push(F('pass','Hidden owner switches?','None found','No mint, freeze, pause, or tax-change switches in the code.'));
   const status=f.some(x=>x.sev==='fail')?'fail':f.some(x=>x.sev==='warn')?'warn':(unknown&&!f.some(x=>x.sev==='pass'))?'unknown':'pass';
-  return{id:'sell',title:'Can you sell it?',status,findings:f};
+  return{id:'sell',title:'Can you sell it?',status,findings:f,ran:simRan,sellBlocked:simSellBlocked,transferFrozen:simFrozen};
 }
 
 /* ===== connection graph ===== */
@@ -1088,9 +1113,24 @@ function buildTrendPoints(mkt){
     {t:'24h', y:at(ch.h24)},
     {t:'6h',  y:at(ch.h6)},
     {t:'1h',  y:at(ch.h1)},
+    {t:'5m',  y:at(ch.m5)},
     {t:'now', y:now}
   ].filter(p=>p.y!=null&&isFinite(p.y)&&p.y>0);
   return pts.length>=2?pts:null;
+}
+
+/* Catmull-Rom -> cubic bezier for a smooth monotone-ish curve through anchors. */
+function smoothPath(coords){
+  if(coords.length<2)return '';
+  if(coords.length===2)return 'M'+coords[0][0].toFixed(1)+' '+coords[0][1].toFixed(1)+' L'+coords[1][0].toFixed(1)+' '+coords[1][1].toFixed(1);
+  let d='M'+coords[0][0].toFixed(1)+' '+coords[0][1].toFixed(1);
+  for(let i=0;i<coords.length-1;i++){
+    const p0=coords[i-1]||coords[i], p1=coords[i], p2=coords[i+1], p3=coords[i+2]||p2;
+    const c1x=p1[0]+(p2[0]-p0[0])/6, c1y=p1[1]+(p2[1]-p0[1])/6;
+    const c2x=p2[0]-(p3[0]-p1[0])/6, c2y=p2[1]-(p3[1]-p1[1])/6;
+    d+=' C'+c1x.toFixed(1)+' '+c1y.toFixed(1)+' '+c2x.toFixed(1)+' '+c2y.toFixed(1)+' '+p2[0].toFixed(1)+' '+p2[1].toFixed(1);
+  }
+  return d;
 }
 
 function renderSparkline(box, mkt){
@@ -1101,16 +1141,17 @@ function renderSparkline(box, mkt){
   const W=100, H=40, pad=3;
   const x=i=>pad+(i/(pts.length-1))*(W-2*pad);
   const y=v=>H-pad-((v-lo)/range)*(H-2*pad);
+  const coords=pts.map((p,i)=>[x(i),y(p.y)]);
   const up=ys[ys.length-1]>=ys[0];
   const color=up?'var(--green)':'var(--red)';
-  const line=pts.map((p,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(p.y).toFixed(1)).join(' ');
+  const line=smoothPath(coords);
   const area=line+' L'+x(pts.length-1).toFixed(1)+' '+H+' L'+x(0).toFixed(1)+' '+H+' Z';
   const chg=((ys[ys.length-1]-ys[0])/ys[0]*100);
   box.innerHTML=
     '<div class="spark-wrap">'
     +'<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="spark-svg">'
     +'<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
-    +'<stop offset="0" stop-color="'+color+'" stop-opacity="0.25"/>'
+    +'<stop offset="0" stop-color="'+color+'" stop-opacity="0.28"/>'
     +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
     +'<path d="'+area+'" fill="url(#sg)"/>'
     +'<path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
@@ -1118,7 +1159,7 @@ function renderSparkline(box, mkt){
     +'<div class="spark-labels"><span>24h ago</span><span class="spark-chg" style="color:'+color+'">'
       +(chg>=0?'+':'')+chg.toFixed(1)+'%</span><span>now</span></div>'
     +'</div>'
-    +'<div class="spark-note">Reconstructed from 24h / 6h / 1h price changes \u2014 trend shape, not tick-by-tick.</div>';
+    +'<div class="spark-note">Reconstructed from 24h / 6h / 1h / 5m price changes \u2014 trend shape, not tick-by-tick.</div>';
 }
 
 /* ============================================================
@@ -1305,6 +1346,7 @@ async function holdersFromChain(token, pool, pairCreatedAtMs) {
     total: supply,
     creator: analysis2.creator,
     creatorPct,
+    sampleHolder: (real[0] && real[0].addr) || null,   // a real holder to sim a sell from
     bundle: { maxFunder: analysis2.maxFunder, funderAddr: analysis2.funderAddr, maxRecipients: 0, complete: true },
     source: 'chain'
   };
@@ -1476,7 +1518,7 @@ async function run() {
       const detectedPool = chainHolders.pool || poolGuess;
       const bub = holdersToBubbles(chainHolders, detectedPool, chainHolders.creator);
       mH = {
-        status: 'ok', pool: detectedPool, sampleHolder: mHexplorer.sampleHolder,
+        status: 'ok', pool: detectedPool, sampleHolder: chainHolders.sampleHolder || mHexplorer.sampleHolder,
         conc: chainHolders.conc, holderCount: chainHolders.conc.count,
         bubbles: bub.bubbles, edges: bub.edges, source: 'chain',
         bundle: chainHolders.bundle,           // pool/creator excluded — accurate
@@ -1551,7 +1593,11 @@ function renderVerdict(d) {
 function render(d) {
   const v = VMAP[d.verdict.label] || VMAP.unknown;
   const sig = d.sig;
-  const shareUrl = location.origin + location.pathname + '?token=' + d.addr;
+  // The /s/<token> endpoint serves per-token OG tags (chart image) to crawlers,
+  // then redirects real users to the scanner. Falls back to ?token= if the
+  // static-only deploy has no serverless functions.
+  const appUrl = location.origin + location.pathname + '?token=' + d.addr;
+  const shareUrl = location.origin + '/s/' + d.addr;
   let h = '';
 
   h += '<div class="banner ' + v.cls + '"><div class="big">' + esc(v.big) + '</div>'
@@ -1598,6 +1644,11 @@ function render(d) {
   $('result').innerHTML = h;
   const cs = $('copyShare');
   if (cs) cs.onclick = () => { try { navigator.clipboard.writeText(shareUrl); cs.textContent = 'Copied \u2713'; setTimeout(() => cs.textContent = 'Copy link', 1400); } catch (e) {} };
+
+  // expandable findings
+  $('result').querySelectorAll('.finding.fexp .frow').forEach(row => {
+    row.addEventListener('click', () => row.parentNode.classList.toggle('open'));
+  });
 
   // tappable bubbles
   const bubSvg = $('bubbles');
@@ -1670,7 +1721,30 @@ function renderFindings(d) {
   }
   return rows.join('');
 }
-function finding(sev, q, a) { return '<div class="finding f-' + sev + '"><span class="fq">' + esc(q) + '</span><span class="fa">' + esc(a) + '</span></div>'; }
+const FINDING_NOTES = {
+  'Mint function': 'A mint function lets whoever controls the contract create new tokens out of thin air. That dilutes every holder and can crush the price instantly. "None found" means the supply is fixed in the code.',
+  'Blacklist / freeze': 'A blacklist or freeze function lets the team block specific wallets from selling — trapping your tokens. "None found" means no such switch exists in the bytecode.',
+  'Adjustable tax': 'The owner can change the buy/sell tax after you\u2019ve bought. A token with 5% tax today could become 99% tomorrow, effectively blocking sells. Treat as a caution.',
+  'Pausable': 'A pause switch lets the team halt all trading at will. Legitimate for some projects, but it means they can freeze the market whenever they choose.',
+  'Can you sell it?': 'RobinScan runs a live simulation: it checks whether a real holder can move the token to a normal wallet AND into the trading pool (which is what selling does). If the pool transfer is blocked, it\u2019s a honeypot — you can buy but never sell.',
+  'Biggest wallet': 'The single largest non-pool holder, as a percent of total supply. A very high number means one wallet could dump and tank the price. Under ~5% is healthy; over 30% is a red flag.',
+  'Top 10 wallets': 'Combined holding of the ten biggest non-pool wallets. High concentration means a small group controls the token\u2019s fate. The liquidity pool and burn address are excluded so this reflects actual holders.',
+  'Creator holdings': 'How much the wallet that first received the minted supply still holds. A creator holding a large share can dump on buyers; "sold / holds none" means they\u2019ve distributed out (which can be good or a warning depending on context).',
+  'Launch distribution': 'RobinScan replays the token\u2019s earliest transfers to see if many wallets were funded by the same source in the launch window — a "bundle." Bundles let one entity secretly control much of the supply. Transfers from the pool or a router are excluded, since those are normal trading.',
+  'Liquidity secured': 'The share of liquidity-pool tokens that are burned or locked. If liquidity isn\u2019t secured, the team can pull it and leave holders unable to sell — a "rug pull." Higher is safer.',
+  'Liquidity': 'This token uses a Uniswap-v3-style position, where the standard "LP tokens burned" check doesn\u2019t apply. Liquidity security has to be judged from the position directly.'
+};
+
+function finding(sev, q, a, extra) {
+  const note = FINDING_NOTES[q] || '';
+  const detail = (extra ? '<div class="fdetail">' + esc(extra) + '</div>' : '')
+    + (note ? '<div class="fnote">' + esc(note) + '</div>' : '');
+  const chevron = note || extra ? '<span class="fchev">\u203a</span>' : '';
+  return '<div class="finding f-' + sev + (note || extra ? ' fexp' : '') + '">'
+    + '<div class="frow"><span class="fq">' + esc(q) + chevron + '</span><span class="fa">' + esc(a) + '</span></div>'
+    + (detail ? '<div class="fbody">' + detail + '</div>' : '')
+    + '</div>';
+}
 
 /* ---- boot ---- */
 (function () {
