@@ -130,6 +130,18 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .spark-labels{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:10.5px;color:var(--fg-faint)}
 .spark-chg{font-family:var(--mono);font-weight:600}
 .spark-note{font-size:10px;color:var(--fg-faint);margin-top:8px;line-height:1.4}
+
+.tokhead{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.toklogo{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--surface-2);flex:none}
+.toklogo-ph{width:44px;height:44px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--fg-dim);flex:none}
+.tokfull{font-size:12.5px;color:var(--fg-dim)}
+.bubcard{padding:15px 16px}
+#bubbles{width:100%;height:auto;display:block;margin-top:4px}
+.bub{cursor:default}
+.blegend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:10.5px;color:var(--fg-dim)}
+.blegend span{display:flex;align-items:center;gap:5px}
+.blegend i{width:9px;height:9px;border-radius:50%;display:inline-block}
 </style>
 </head>
 <body>
@@ -403,7 +415,10 @@ async function fetchMarket(addr,totalSupply,dec){
       dex:use.dexId||null,
       change:(use.priceChange||{}),
       txns:((use.txns&&use.txns.h24)||{}),
-      volH1:((use.volume&&use.volume.h1)||0)};
+      volH1:((use.volume&&use.volume.h1)||0),
+      name:((use.baseToken&&use.baseToken.name)||''),
+      sym:((use.baseToken&&use.baseToken.symbol)||''),
+      logo:((use.info&&use.info.imageUrl)||null)};
   }catch(e){return null;}
 }
 
@@ -1092,6 +1107,147 @@ function renderSparkline(box, mkt){
     +'<div class="spark-note">Reconstructed from 24h / 6h / 1h price changes \u2014 trend shape, not tick-by-tick.</div>';
 }
 
+/* ============================================================
+   Holder reconstruction from Transfer events.
+
+   Blockscout's /holders endpoint 500s on many tokens. Instead we replay
+   Transfer logs from a log-capable RPC and sum balances ourselves. The public
+   Robinhood endpoint serves eth_getLogs (Alchemy's free tier does not), so we
+   use a dedicated LOGS_RPC for this path and keep the fast RPC for everything else.
+   ============================================================ */
+
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const H_ZERO = '0x0000000000000000000000000000000000000000';
+const H_DEAD = '0x000000000000000000000000000000000000dead';
+
+/* A separate RPC just for logs. Defaults to the public endpoint, which the
+   docs show serves eth_getLogs at ~100%. Swap for a QuickNode/Goldsky URL if
+   the public one rate-limits under real traffic. */
+const LOGS_RPC = (typeof window !== 'undefined' && window.RS_LOGS_RPC) || 'https://rpc.mainnet.chain.robinhood.com';
+
+let _logId = 1;
+async function logsRpc(method, params) {
+  const res = await fetch(LOGS_RPC, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: _logId++, method, params })
+  });
+  if (!res.ok) throw new Error('logs RPC HTTP ' + res.status);
+  const j = await res.json();
+  if (j.error) throw new Error(j.error.message || 'logs RPC error');
+  return j.result;
+}
+
+/* Pull every Transfer log for a token, chunking by block range and
+   bisecting whenever the endpoint rejects a range as too large. */
+async function fetchTransferLogs(token, opts) {
+  opts = opts || {};
+  let latest;
+  try { latest = parseInt(await logsRpc('eth_blockNumber', []), 16); }
+  catch (e) { return null; }              // endpoint unreachable -> caller falls back
+  if (!latest) return null;
+
+  const maxWindow = opts.maxWindow || 9000;
+  const start = Math.max(0, latest - (opts.lookback || latest));
+  const out = [];
+  let guard = 0, hardFail = false;
+
+  async function range(from, to) {
+    if (hardFail || ++guard > 400) return;
+    try {
+      const logs = await logsRpc('eth_getLogs', [{
+        address: token, topics: [TRANSFER_TOPIC],
+        fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
+      }]);
+      if (Array.isArray(logs)) for (const l of logs) out.push(l);
+    } catch (e) {
+      const msg = String(e.message || e).toLowerCase();
+      // if the very first call is rejected outright (method not supported), bail
+      if (/method|not supported|invalid/.test(msg) && guard <= 1) { hardFail = true; return; }
+      if (to > from) { const mid = (from + to) >> 1; await range(from, mid); await range(mid + 1, to); }
+    }
+  }
+
+  for (let f = start; f <= latest && !hardFail; f += maxWindow + 1) {
+    await range(f, Math.min(latest, f + maxWindow));
+  }
+  if (hardFail) return null;
+  return out;
+}
+
+/* Replay logs into balances. */
+function reconstructBalances(logs) {
+  const bal = {};
+  for (const l of logs) {
+    if (!l.topics || (l.topics[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue;
+    if (!l.topics[1] || !l.topics[2]) continue;
+    const from = ('0x' + l.topics[1].slice(-40)).toLowerCase();
+    const to = ('0x' + l.topics[2].slice(-40)).toLowerCase();
+    let val;
+    try { val = BigInt(l.data && l.data !== '0x' ? l.data : '0x0'); } catch (e) { continue; }
+    if (from !== H_ZERO) bal[from] = (bal[from] || 0n) - val;
+    bal[to] = (bal[to] || 0n) + val;
+  }
+  return Object.entries(bal)
+    .filter(([a, v]) => v > 0n)
+    .map(([addr, val]) => ({ addr, val }))
+    .sort((a, b) => (b.val < a.val ? -1 : b.val > a.val ? 1 : 0));
+}
+
+/* Public entry: returns holders + concentration, or null if logs unavailable. */
+async function holdersFromChain(token, pool) {
+  const logs = await fetchTransferLogs(token);
+  if (!logs || !logs.length) return null;
+  const holders = reconstructBalances(logs);
+  if (!holders.length) return null;
+
+  const p = (pool || '').toLowerCase();
+  const isSys = a => a === H_ZERO || a === H_DEAD;
+  const real = holders.filter(h => h.addr !== p && !isSys(h.addr));
+  const total = real.reduce((s, h) => s + h.val, 0n);
+
+  let top1 = 0, top10 = 0;
+  if (total > 0n) {
+    const pctOf = v => Number((v * 10000n) / total) / 100;
+    top1 = real.length ? pctOf(real[0].val) : 0;
+    let c = 0n; for (let i = 0; i < 10 && i < real.length; i++) c += real[i].val;
+    top10 = pctOf(c);
+  }
+
+  return {
+    holders,                 // full list incl. pool/burn (for the bubble map)
+    real,                    // holders only
+    conc: { top1, top10, count: real.length },
+    total,
+    source: 'chain'
+  };
+}
+
+/* Turn reconstructed holders into bubbles for the map.
+   kinds: pool (LP), burn (dead/zero), creator (first minted-to), whale (>=5%), holder */
+function holdersToBubbles(res, pool, creator) {
+  if (!res || !res.holders || !res.holders.length) return { bubbles: [], edges: [] };
+  const p = (pool || '').toLowerCase();
+  const cr = (creator || '').toLowerCase();
+  const total = res.holders.reduce((s, h) => s + h.val, 0n);
+  if (total === 0n) return { bubbles: [], edges: [] };
+
+  // cap to top 30 so the map stays readable
+  const top = res.holders.slice(0, 30);
+  const bubbles = top.map(h => {
+    const pct = Number((h.val * 100000n) / total) / 1000;
+    let kind = 'holder';
+    if (h.addr === p) kind = 'pool';
+    else if (h.addr === H_DEAD || h.addr === H_ZERO) kind = 'burn';
+    else if (h.addr === cr) kind = 'creator';
+    else if (pct >= 5) kind = 'whale';
+    // radius scales with sqrt(pct) so area ~ holding
+    const r = Math.max(8, Math.min(46, 8 + Math.sqrt(pct) * 7));
+    return { addr: h.addr, pct, kind, r };
+  });
+  return { bubbles, edges: [] };
+}
+
 /* ================= scan orchestration + rendering ================= */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const shortAddr = a => a ? a.slice(0, 7) + '\u2026' + a.slice(-5) : '';
@@ -1164,10 +1320,29 @@ async function run() {
 
     // 3. market + holders in parallel
     log('\u203a market + holders\u2026');
-    const [mkt, mH] = await Promise.all([
+    const [mkt, mHexplorer] = await Promise.all([
       fetchMarket(addr, supply, dec).catch(() => null),
       modHolders(addr, dec).catch(() => ({ status: 'unknown', pool: null, edges: [] }))
     ]);
+
+    // Prefer chain-reconstructed holders (Blockscout /holders 500s constantly).
+    // Fall back to the explorer result if the log RPC can't serve getLogs.
+    const poolGuess = mHexplorer.pool || (mkt && mkt.pairAddress) || null;
+    let mH = mHexplorer;
+    let chainHolders = null;
+    try {
+      log('  reading holders from chain logs\u2026');
+      chainHolders = await holdersFromChain(addr, poolGuess);
+    } catch (e) {}
+    if (chainHolders && chainHolders.conc) {
+      const bub = holdersToBubbles(chainHolders, poolGuess, null);
+      mH = {
+        status: 'ok', pool: poolGuess, sampleHolder: mHexplorer.sampleHolder,
+        conc: chainHolders.conc, holderCount: chainHolders.conc.count,
+        bubbles: bub.bubbles, edges: bub.edges, source: 'chain'
+      };
+      log('  \u2713 ' + chainHolders.conc.count + ' holders from chain', 'ok');
+    }
 
     // 4. honeypot sim + LP lock in parallel (both need the pool)
     // The holders endpoint sometimes 500s on Blockscout; when it does we lose the
@@ -1255,10 +1430,20 @@ function render(d) {
 
   h += '<div class="card chartcard"><div class="chart-h">Recent price trend</div><div id="scanChart"><div class="cload">\u2026</div></div></div>';
 
-  h += '<div class="card tokcard"><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '</div>'
+  h += '<div class="card tokcard">'
+    + '<div class="tokhead">'
+    + (d.mkt && d.mkt.logo ? '<img class="toklogo" src="' + esc(d.mkt.logo) + '" alt="" onerror="this.style.display=\'none\'">' : '<div class="toklogo-ph">' + esc((d.sym || '?').slice(0, 3).toUpperCase()) + '</div>')
+    + '<div><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '</div>'
+    + '<div class="tokfull">' + esc(d.name || '') + '</div></div></div>'
     + '<div class="tokmeta">' + shortAddr(d.addr) + '</div>'
     + '<div class="toklinks">' + tlink('Explorer', SCOUT + '/token/' + d.addr)
     + tlink('DexScreener', 'https://dexscreener.com/robinhood/' + d.addr) + '</div></div>';
+
+  // bubble map (holder distribution)
+  if (d.mH && d.mH.bubbles && d.mH.bubbles.length) {
+    h += '<div class="card bubcard"><div class="chart-h">Holder map</div>'
+      + renderBubbles(d.mH.bubbles, d.mH.edges) + '</div>';
+  }
 
   h += '<div class="card">' + renderFindings(d) + '</div>';
 
