@@ -124,6 +124,12 @@ body{margin:0;background:var(--bg);color:var(--fg);
   font-family:inherit;text-align:center;text-decoration:none;transition:all .15s}
 .sharebtn:hover{border-color:var(--green-dim);color:var(--green)}
 .fine{font-size:10.5px;color:var(--fg-faint);text-align:center;margin-top:20px;line-height:1.55}
+
+.spark-wrap{margin-top:2px}
+.spark-svg{width:100%;height:56px;display:block}
+.spark-labels{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:10.5px;color:var(--fg-faint)}
+.spark-chg{font-family:var(--mono);font-weight:600}
+.spark-note{font-size:10px;color:var(--fg-faint);margin-top:8px;line-height:1.4}
 </style>
 </head>
 <body>
@@ -394,7 +400,10 @@ async function fetchMarket(addr,totalSupply,dec){
     return{price,mcap,pairAddress:(use.pairAddress||null),pairCreatedAt:(use.pairCreatedAt||null),
       vol:(use.volume&&use.volume.h24)||null,
       liq:(use.liquidity&&use.liquidity.usd)||null,
-      dex:use.dexId||null};
+      dex:use.dexId||null,
+      change:(use.priceChange||{}),
+      txns:((use.txns&&use.txns.h24)||{}),
+      volH1:((use.volume&&use.volume.h1)||0)};
   }catch(e){return null;}
 }
 
@@ -814,53 +823,13 @@ let LOG_ERR=null;                 /* last real error text from the provider */
 let LOG_RANGE=null;               /* largest block range this endpoint accepts */
 const RANGE_RE=/range|size|limit|exceed|too many|too large|10000|block/i;
 
-async function getLogsChunk(params,from,to,depth){
-  depth=depth||0;
-  try{
-    return await rpc('eth_getLogs',[Object.assign({},params,{
-      fromBlock:'0x'+from.toString(16),toBlock:'0x'+to.toString(16)})]);
-  }catch(e){
-    const msg=String(e.message||e);
-    if(!LOG_ERR)LOG_ERR=msg;
-    /* Only a range/size complaint is worth splitting. Any other 400 means the
-       query shape is rejected — splitting just multiplies the same error. */
-    if(RATE_LIMITED||depth>=3||to-from+1<=MIN_RANGE||!RANGE_RE.test(msg))return [];
-    const hint=parseRangeHint(msg);
-    let mid=(hint&&hint>=MIN_RANGE&&hint<(to-from+1))?from+hint-1:Math.floor((from+to)/2);
-    if(mid>=to)mid=Math.floor((from+to)/2);
-    const a=await getLogsChunk(params,from,mid,depth+1);
-    const b=await getLogsChunk(params,mid+1,to,depth+1);
-    return a.concat(b);
-  }
-}
+
 
 /* Find the biggest range the endpoint will actually serve, once per session. */
 /* This chain's RPC does not serve eth_getLogs at all (confirmed 400 on every
    shape). We never ask. Token discovery + charts use Blockscout instead. */
 const RPC_SERVES_LOGS=false;
-async function getLogsAdaptive(params,from,to){
-  if(to<from)return [];
-  const range=LOG_RANGE||MAX_RANGE;
-  const chunks=planChunks(from,to,range);
-  let all=[];
-  for(let i=0;i<chunks.length;i+=BATCH_SIZE){
-    const slice=chunks.slice(i,i+BATCH_SIZE);
-    const reqs=slice.map(c=>({method:'eth_getLogs',params:[Object.assign({},params,{
-      fromBlock:'0x'+c[0].toString(16),toBlock:'0x'+c[1].toString(16)})]}));
-    let res;
-    try{res=await rpcBatch(reqs);}catch(e){if(!LOG_ERR)LOG_ERR=String(e.message||e);break;}
-    for(let k=0;k<slice.length;k++){
-      if(Array.isArray(res[k]))all=all.concat(res[k]);
-      else{
-        /* one retry, only if the provider complained about range/size */
-        const r=await getLogsChunk(params,slice[k][0],slice[k][1],0);
-        all=all.concat(r);
-      }
-    }
-    if(all.length>60000||RATE_LIMITED)break;
-  }
-  return all;
-}
+
 
 const _cache={};
 function cacheGet(k){const v=_cache[k];if(v&&Date.now()-v.t<CACHE_TTL)return v.d;return null;}
@@ -896,18 +865,7 @@ const RH_CHAINS=new Set(['robinhood','robinhoodchain','robinhood-chain','4663'])
 
 
 /* The DEX factory address, discovered once by asking a known pool who made it. */
-async function findFactory(){
-  try{const c=localStorage.getItem('rhscan.factory');if(c&&/^0x[0-9a-f]{40}$/.test(c)&&c!==ZERO)return c;}catch(e){}
-  const pairs=await dexSearch('WETH');
-  for(const p of pairs.slice(0,4)){
-    if(!p.pairAddress)continue;
-    try{
-      const f=addrWord(await call(p.pairAddress,SEL_FACTORY));
-      if(f&&f!==ZERO){try{localStorage.setItem('rhscan.factory',f);}catch(e){}return f;}
-    }catch(e){}
-  }
-  return null;
-}
+
 
 /* Real deploy times: read the block timestamp for each creation block. */
 
@@ -1022,153 +980,12 @@ async function marketFor(t){
 /* One filtered request beats paginating every log an address ever emitted.
    A busy v3 pool has tens of thousands of logs; the unfiltered v2 endpoint
    500s on it. This asks for a single topic over a bounded block range. */
-async function logsFiltered(address,topic0,spans){
-  let latest=null;
-  try{latest=await latestBlock();}catch(e){}
-  if(!latest)return null;
-  for(const span of (spans||[40000,10000,2000])){
-    const from=Math.max(0,latest-span);
-    try{
-      const j=await scout('/api?module=logs&action=getLogs&fromBlock='+from+'&toBlock='+latest
-        +'&address='+address+'&topic0='+topic0,1);
-      if(j&&j.status==='1'&&Array.isArray(j.result)&&j.result.length){
-        return j.result.map(l=>({topics:l.topics,data:l.data,
-          block_number:parseInt(l.blockNumber,16)}));
-      }
-    }catch(e){}
-  }
-  return null;
-}
+
 
 /* last-resort: a single page of the v2 address-logs endpoint */
-async function scoutLogs(address,maxPages){
-  let url='/api/v2/addresses/'+address+'/logs';
-  const out=[];
-  for(let page=0;page<(maxPages||1);page++){
-    let j=null;
-    try{j=await scout(url,1);}catch(e){break;}
-    if(!j||!j.items||!j.items.length)break;
-    out.push.apply(out,j.items);
-    const np=j.next_page_params;
-    if(!np)break;
-    const qs=Object.keys(np).filter(k=>np[k]!==null&&np[k]!==undefined)
-      .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(np[k])).join('&');
-    if(!qs)break;
-    url='/api/v2/addresses/'+address+'/logs?'+qs;
-  }
-  return out;
-}
-async function priceSeries(token){
-  const pool=(token.pairAddress)||token.pool;
-  if(!pool)return{kind:'none',reason:'no pool found'};
-  let t0=null,t1=null;
-  try{t0=addrWord(await call(pool,READ.token0));}catch(e){}
-  try{t1=addrWord(await call(pool,READ.token1));}catch(e){}
-  if(!t0||!t1)return{kind:'none',reason:'not a standard pool'};
-  const tokenIs0=t0===token.addr.toLowerCase();
-  if(!tokenIs0&&t1!==token.addr.toLowerCase())return{kind:'none',reason:'token not in this pool'};
-  let tokenDec=token.dec,quoteDec=18;
-  try{quoteDec=Number(toBig(await call(tokenIs0?t1:t0,READ.decimals)))||18;}catch(e){}
 
-  /* try v3 Swap first (this chain is v3), then v2 Sync; one request each */
-  let items=await logsFiltered(pool,TOPIC_V3SWAP);
-  let isV3=!!(items&&items.length);
-  if(!items||!items.length)items=await logsFiltered(pool,TOPIC_SYNC);
-  if(!items||!items.length)items=await scoutLogs(pool,1);
-  if(!items||!items.length)return{kind:'none',reason:'no swaps indexed for this pool yet'};
-  let pts=[];
 
-  /* v2 path: Sync(reserve0,reserve1) */
-  for(const l of items){
-    const t=(l.topics||[])[0];
-    if(!t||t.toLowerCase()!==TOPIC_SYNC)continue;
-    const d=strip(l.data);if(d.length<128)continue;
-    const r0=BigInt('0x'+d.slice(0,64)),r1=BigInt('0x'+d.slice(64,128));
-    const base=tokenIs0?r0:r1,quote=tokenIs0?r1:r0;
-    if(base===0n)continue;
-    const S=10n**12n;
-    const scaled=quote*S*(10n**BigInt(tokenDec))/(base*(10n**BigInt(quoteDec)));
-    const p=Number(scaled)/1e12;
-    const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
-    if(isFinite(p)&&p>0&&isFinite(blk))pts.push({x:blk,y:p});
-  }
 
-  /* v3/v4 path: Swap(...,sqrtPriceX96,...) — Robinhood Chain pairs are v3 */
-  if(pts.length<2){
-    pts=[];
-    const Q96=Math.pow(2,96);
-    for(const l of items){
-      const t=(l.topics||[])[0];
-      if(!t||t.toLowerCase()!==TOPIC_V3SWAP)continue;
-      const d=strip(l.data);
-      if(d.length<320)continue;                 /* 5 words: amt0,amt1,sqrtP,liq,tick */
-      const sqrtX96=BigInt('0x'+d.slice(128,192));
-      if(sqrtX96===0n)continue;
-      /* price token0-in-token1 = (sqrt/2^96)^2, decimal-adjusted */
-      const r=Number(sqrtX96)/Q96;
-      let p0=r*r*Math.pow(10,tokenDec-quoteDec);
-      const price=tokenIs0?p0:(p0>0?1/p0:0);
-      const blk=Number(l.block_number!=null?l.block_number:l.blockNumber);
-      if(isFinite(price)&&price>0&&isFinite(blk))pts.push({x:blk,y:price});
-    }
-  }
-
-  pts.sort((a,b)=>a.x-b.x);
-  if(pts.length<2)return{kind:'none',reason:'no swaps indexed for this pool yet'};
-
-  /* anchor to live USD price; shape/% preserved */
-  const usd=(token.mkt&&token.mkt.price)||token.priceUsd||null;
-  if(usd&&isFinite(usd)&&usd>0){
-    const last=pts[pts.length-1].y;
-    if(last>0){const k=usd/last;if(isFinite(k)&&k>0)pts=pts.map(p=>({x:p.x,y:p.y*k}));}
-    return{kind:'price',unit:'usd',pts:pts.slice(-300)};
-  }
-  return{kind:'price',unit:'quote',pts:pts.slice(-300)};
-}
-function renderChart(host,series){
-  if(!series||series.kind==='none'||!series.pts||series.pts.length<2){
-    const why=(series&&series.reason)||'too few pool updates';
-    host.innerHTML='<div class="cload">No price chart \u2014 '+esc(why)+'.<br><span style="opacity:.7">Charts need a v2-style pool with indexed reserve updates.</span></div>';return;}
-  const isPrice=series.kind==='price',pts=series.pts,W=560,H=200,pad=16;
-  const c=buildChart(pts,W,H,pad);
-  const first=pts[0].y,last=pts[pts.length-1].y;
-  const chg=first>0?((last-first)/first*100):0;
-  const up=chg>=0,col=up?'#00c805':'#ff5000';
-  const uid='g'+Math.random().toString(36).slice(2,8);
-  const baseNote=(isPrice
-    ?'Reconstructed from the pool\u2019s recent reserve updates on-chain. Recent history only \u2014 not the token\u2019s full lifetime.'
-    :'No price pool found, so this shows how often the token moved, not what it costs.')+' Drag across the chart to inspect.';
-  host.innerHTML=
-    '<div class="chart-meta"><div><span class="chart-price">'+(isPrice?((series.unit==='usd'?'$':'')+fmtPrice(last)):last.toLocaleString())+'</span>'
-    +(isPrice?' <span style="color:var(--fg-faint);font-size:11px">'+(series.unit==='usd'?'USD':'quote/token')+'</span>':'')+'</div>'
-    +'<div><span class="chart-chg '+(up?'chg-up':'chg-dn')+'">'+(up?'+':'')+chg.toFixed(1)+'%</span></div></div>'
-    +'<div class="chart-kind">'+(isPrice?(series.unit==='usd'?'Price (USD) \u00b7 from pool reserves, anchored to live price':'Price \u00b7 pool reserves (quote units)'):'Transfer activity')+'</div>'
-    +'<svg class="chart" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
-    +'<defs><linearGradient id="'+uid+'" x1="0" y1="0" x2="0" y2="1">'
-    +'<stop offset="0%" stop-color="'+col+'" stop-opacity="0.28"/>'
-    +'<stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs>'
-    +'<path d="'+c.area+'" fill="url(#'+uid+')"/>'
-    +'<path d="'+c.d+'" fill="none" stroke="'+col+'" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
-    +'<line class="cx" x1="0" y1="0" x2="0" y2="'+H+'" stroke="'+col+'" stroke-width="1" stroke-opacity="0" stroke-dasharray="3 3"/>'
-    +'<circle class="cdot" cx="0" cy="0" r="3.5" fill="'+col+'" opacity="0"/></svg>'
-    +'<div class="chart-note">'+baseNote+'</div>';
-  const svg=host.querySelector('svg.chart');const cx=svg.querySelector('.cx'),dot=svg.querySelector('.cdot'),note=host.querySelector('.chart-note');
-  function at(clientX){
-    const r=svg.getBoundingClientRect();const px=(clientX-r.left)/r.width*W;
-    let best=0,bd=Infinity;
-    for(let i=0;i<pts.length;i++){const d=Math.abs(c.sx(pts[i].x)-px);if(d<bd){bd=d;best=i;}}
-    const p=pts[best];
-    cx.setAttribute('x1',c.sx(p.x));cx.setAttribute('x2',c.sx(p.x));cx.setAttribute('stroke-opacity','0.5');
-    dot.setAttribute('cx',c.sx(p.x));dot.setAttribute('cy',c.sy(p.y));dot.setAttribute('opacity','1');
-    note.textContent=(isPrice?('Price '+(series.unit==='usd'?'$':'')+fmtPrice(p.y)):'Transfers '+p.y)+'  \u00b7  block '+p.x.toLocaleString();
-  }
-  function off(){cx.setAttribute('stroke-opacity','0');dot.setAttribute('opacity','0');note.textContent=baseNote;}
-  svg.addEventListener('mousemove',e=>at(e.clientX));
-  svg.addEventListener('mouseleave',off);
-  svg.addEventListener('touchstart',e=>at(e.touches[0].clientX),{passive:true});
-  svg.addEventListener('touchmove',e=>at(e.touches[0].clientX),{passive:true});
-  svg.addEventListener('touchend',off);
-}
 
 
 
@@ -1229,6 +1046,50 @@ function entrySignal(o){
   if(thin){out.body+=' Liquidity is thin ('+(liqRatio*100).toFixed(1)+'% of market cap), so expect heavy slippage and sharper moves both ways.';if(out.tone==='good')out.tone='watch';posture='thin-'+posture;}
   out.levels=levels;out.posture=posture;out.flow=flow;
   return out;
+}
+
+/* Reconstruct a small, honest price trend from DexScreener's change %s.
+   Not tick-by-tick (that data isn't public for this chain) — these are real
+   prices at known past moments, back-calculated from the % changes. */
+function buildTrendPoints(mkt){
+  if(!mkt||!mkt.price||!isFinite(mkt.price))return null;
+  const now=mkt.price, ch=mkt.change||{};
+  const at=p=>(typeof p==='number'&&isFinite(p))?now/(1+p/100):null;
+  const pts=[
+    {t:'24h', y:at(ch.h24)},
+    {t:'6h',  y:at(ch.h6)},
+    {t:'1h',  y:at(ch.h1)},
+    {t:'now', y:now}
+  ].filter(p=>p.y!=null&&isFinite(p.y)&&p.y>0);
+  return pts.length>=2?pts:null;
+}
+
+function renderSparkline(box, mkt){
+  const pts=buildTrendPoints(mkt);
+  if(!pts){box.innerHTML='<div class="cload">Not enough price history to chart yet.</div>';return;}
+  const ys=pts.map(p=>p.y);
+  const lo=Math.min(...ys), hi=Math.max(...ys), range=Math.max(hi-lo,hi*1e-9);
+  const W=100, H=40, pad=3;
+  const x=i=>pad+(i/(pts.length-1))*(W-2*pad);
+  const y=v=>H-pad-((v-lo)/range)*(H-2*pad);
+  const up=ys[ys.length-1]>=ys[0];
+  const color=up?'var(--green)':'var(--red)';
+  const line=pts.map((p,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(p.y).toFixed(1)).join(' ');
+  const area=line+' L'+x(pts.length-1).toFixed(1)+' '+H+' L'+x(0).toFixed(1)+' '+H+' Z';
+  const chg=((ys[ys.length-1]-ys[0])/ys[0]*100);
+  box.innerHTML=
+    '<div class="spark-wrap">'
+    +'<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="spark-svg">'
+    +'<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
+    +'<stop offset="0" stop-color="'+color+'" stop-opacity="0.25"/>'
+    +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="'+area+'" fill="url(#sg)"/>'
+    +'<path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
+    +'</svg>'
+    +'<div class="spark-labels"><span>24h ago</span><span class="spark-chg" style="color:'+color+'">'
+      +(chg>=0?'+':'')+chg.toFixed(1)+'%</span><span>now</span></div>'
+    +'</div>'
+    +'<div class="spark-note">Reconstructed from 24h / 6h / 1h price changes \u2014 trend shape, not tick-by-tick.</div>';
 }
 
 /* ================= scan orchestration + rendering ================= */
@@ -1344,24 +1205,9 @@ async function run() {
     log('\u2713 done', 'ok');
     render({ addr, name, sym, dec, mkt, flags, mH, mS, mL, bundle, verdict, sig });
 
-    // 8. chart loads after (non-blocking)
-    (async () => {
-      const box = $('scanChart'); if (!box) return;
-      try {
-        const s = await priceSeries({ addr, pool: mH.pool, dec, mkt, pairAddress: mkt && mkt.pairAddress });
-        renderChart(box, s);
-        // recompute signal levels now that we have a series
-        if (s && s.pts && s.pts.length >= 5) {
-          const better = entrySignal({
-            verdict: verdict.label, price: mkt && mkt.price,
-            change: (mkt && mkt.change) || {}, liq: mkt && mkt.liq,
-            mcap: mkt && mkt.mcap, txns: (mkt && mkt.txns) || {}, series: s.pts
-          });
-          const sc = $('sigLevels');
-          if (sc && better.levels) sc.innerHTML = levelsHtml(better.levels);
-        }
-      } catch (e) { box.innerHTML = '<div class="cload">No recent price data for this pool.</div>'; }
-    })();
+    // 8. trend sparkline from DexScreener change data (no CORS-blocked log calls)
+    const box = $('scanChart');
+    if (box) renderSparkline(box, mkt);
 
   } catch (e) {
     showErr('<b>Scan hit an error.</b> ' + esc(String(e.message || e)));
@@ -1402,7 +1248,7 @@ function render(d) {
       + stat('Liquidity', money(d.mkt.liq)) + stat('Price', fmtPrice(d.mkt.price)) + '</div>';
   }
 
-  h += '<div class="card chartcard"><div class="chart-h">Recent price</div><div id="scanChart"><div class="cload">Loading chart\u2026</div></div></div>';
+  h += '<div class="card chartcard"><div class="chart-h">Recent price trend</div><div id="scanChart"><div class="cload">\u2026</div></div></div>';
 
   h += '<div class="card tokcard"><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '</div>'
     + '<div class="tokmeta">' + shortAddr(d.addr) + '</div>'
