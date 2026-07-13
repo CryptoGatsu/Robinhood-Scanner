@@ -125,8 +125,8 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .finding{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;
   border-bottom:1px solid var(--line);gap:12px}
 .finding:last-child{border-bottom:none}
-.fq{font-size:13px;font-weight:600}
-.fa{font-size:12.5px;color:var(--fg-dim);text-align:right}
+.fq{font-size:13px;font-weight:600;flex:1;min-width:0}
+.fa{font-size:12.5px;color:var(--fg-dim);text-align:right;flex:none;white-space:nowrap}
 .f-fail{border-left:3px solid var(--red)}.f-fail .fa{color:var(--red);font-weight:600}
 .f-warn{border-left:3px solid var(--amber)}.f-warn .fa{color:var(--amber)}
 .f-pass{border-left:3px solid var(--green)}
@@ -185,27 +185,33 @@ body{margin:0;background:var(--bg);color:var(--fg);
 /* ---- desktop two-column dashboard (mobile unchanged) ---- */
 .resultgrid{display:block}
 @media(min-width:900px){
-  .wrap{max-width:1120px;padding-left:28px;padding-right:28px}
+  .wrap{max-width:1140px;padding-left:28px;padding-right:28px}
+  /* the top area (logo, tagline, CA strip, input, scan button, safety note)
+     stays a centered, comfortable width — a full-bleed input looks awkward */
+  .header,.scanbox,.log,.fine{max-width:680px;margin-left:auto;margin-right:auto}
+  .header{width:100%}
+  /* results use the full width in two balanced columns */
   .resultgrid{
     display:grid;
-    grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
+    grid-template-columns:1fr 1fr;
     grid-auto-flow:row dense;
-    gap:12px;
+    gap:14px;
     align-items:start;
+    margin-top:14px;
   }
   .resultgrid > .span2{grid-column:1 / -1}
   .resultgrid > [data-col="l"]{grid-column:1}
   .resultgrid > [data-col="r"]{grid-column:2}
   .resultgrid > .card,.resultgrid > .statrow{margin-top:0}
-  /* the header input area also breathes wider on desktop */
-  .scanbox{max-width:720px}
   .banner .big{font-size:34px}
-  /* chart taller on desktop */
   .spark-svg{height:80px}
-  #bubbles{max-height:420px}
+  #bubbles{max-height:440px}
+  /* findings need room to breathe so labels don't wrap oddly */
+  .frow{padding:15px 18px}
+  .fq{font-size:14px}
 }
-@media(min-width:1200px){
-  .wrap{max-width:1200px}
+@media(min-width:1280px){
+  .wrap{max-width:1240px}
 }
 </style>
 </head>
