@@ -225,15 +225,17 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .sim-head{font-size:12.5px;line-height:1.5;padding:11px 13px;border-radius:10px;margin-bottom:12px}
 .sim-head.sim-ok{background:rgba(0,200,5,.07);border:1px solid rgba(0,200,5,.25);color:var(--fg)}
 .sim-head.sim-warn{background:rgba(255,176,32,.07);border:1px solid rgba(255,176,32,.3);color:var(--fg)}
-.sim-list{display:flex;flex-direction:column;gap:7px}
-.sim-row{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 13px;cursor:pointer;transition:border-color .12s}
+.sim-list{display:grid;grid-template-columns:1fr;gap:7px}
+@media(min-width:760px){.sim-list{grid-template-columns:1fr 1fr}}
+.sim-row{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer;
+  transition:border-color .12s;display:grid;grid-template-columns:1fr auto auto auto;gap:14px;align-items:center}
 .sim-row:hover{border-color:var(--green-dim)}
-.sim-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.sim-sym{font-weight:800;font-size:13.5px;color:var(--fg);display:flex;align-items:center}
-.sim-age{font-size:11px;color:var(--fg-dim);font-family:var(--mono);white-space:nowrap;flex:none}
-.sim-bot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
-.sim-addr{font-family:var(--mono);font-size:10.5px;color:var(--fg-faint)}
-.sim-liq{font-family:var(--mono);font-size:10.5px;color:var(--fg-faint);flex:none}
+.sim-main{display:flex;flex-direction:column;min-width:0}
+.sim-sym{font-weight:800;font-size:13px;color:var(--fg);display:flex;align-items:center}
+.sim-addr{font-family:var(--mono);font-size:10px;color:var(--fg-faint);margin-top:2px}
+.sim-stat{display:flex;flex-direction:column;align-items:flex-end;flex:none}
+.sim-sl{font-size:8.5px;font-weight:700;letter-spacing:.06em;color:var(--fg-faint)}
+.sim-sv{font-size:11.5px;font-family:var(--mono);color:var(--fg-dim);white-space:nowrap}
 .sim-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px}
 .sim-pg{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;font-family:inherit}
 .sim-pg:hover:not(:disabled){border-color:var(--green-dim);color:var(--fg)}
@@ -1653,15 +1655,16 @@ function renderSimPage() {
   const rows = slice.map(t => {
     const age = t.created ? fmtDeployed(t.created) : null;
     const liq = t.liq ? ('$' + (t.liq >= 1e6 ? (t.liq / 1e6).toFixed(1) + 'M' : (t.liq / 1e3).toFixed(1) + 'K')) : null;
+    const mc = t.mcap ? ('$' + (t.mcap >= 1e6 ? (t.mcap / 1e6).toFixed(1) + 'M' : t.mcap >= 1e3 ? (t.mcap / 1e3).toFixed(1) + 'K' : t.mcap.toFixed(0))) : null;
     return '<div class="sim-row" onclick="location.href=\'?token=' + esc(t.addr) + '\'">'
-      + '<div class="sim-top">'
+      + '<div class="sim-main">'
       + '<span class="sim-sym">$' + esc(t.symbol || symbol) + (t.isOG ? '<span class="og-badge og-sm">OG</span>' : '') + '</span>'
-      + '<span class="sim-age">' + (age || 'unknown age') + '</span>'
-      + '</div>'
-      + '<div class="sim-bot">'
       + '<span class="sim-addr">' + esc(t.addr.slice(0, 8) + '\u2026' + t.addr.slice(-6)) + '</span>'
-      + '<span class="sim-liq">' + (liq ? liq + ' liq' : 'no LP') + '</span>'
-      + '</div></div>';
+      + '</div>'
+      + '<div class="sim-stat"><span class="sim-sl">MCAP</span><span class="sim-sv">' + (mc || '\u2014') + '</span></div>'
+      + '<div class="sim-stat"><span class="sim-sl">LIQ</span><span class="sim-sv">' + (liq || '\u2014') + '</span></div>'
+      + '<div class="sim-stat"><span class="sim-sl">AGE</span><span class="sim-sv">' + (age || 'unknown') + '</span></div>'
+      + '</div>';
   }).join('');
 
   let pager = '';
@@ -1911,12 +1914,12 @@ function render(d) {
       + renderBubbles(d.mH.bubbles, d.mH.edges) + '</div>';
   }
 
-  // similar-ticker tokens (filled in async by renderDupes)
-  cards += '<div class="card" data-col="r" id="similarCard" style="display:none">'
+  cards += '<div class="card" data-col="l">' + renderFindings(d) + '</div>';
+
+  // similar-ticker tokens — full-width, spans both columns at the bottom
+  cards += '<div class="card span2" id="similarCard" style="display:none">'
     + '<div class="chart-h">Same ticker \u2014 watch for dupes</div>'
     + '<div id="similarBody"></div></div>';
-
-  cards += '<div class="card" data-col="l">' + renderFindings(d) + '</div>';
 
   const tweet = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(
     (d.sym ? '$' + d.sym : 'This token') + ' \u2014 ' + v.big + (sig ? ' \u00b7 ' + sig.head : '') + '\n\nScanned with RobinScan'
