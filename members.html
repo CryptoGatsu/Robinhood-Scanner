@@ -1451,15 +1451,24 @@ async function swExecute(){
         btn.innerHTML='<span class="spin"></span> Confirm approval\u2026';
         const a=ca.data.approval;
         const apHash=await window.ethereum.request({ method:'eth_sendTransaction', params:[ normalizeTx(a, wallet, false) ] });
-        swStatus('Approval sent, waiting\u2026','');
-        await swWaitReceipt(apHash);
+        swStatus('Approval confirming on-chain\u2026','');
+        const aprc = await swWaitReceipt(apHash);
+        if(!aprc || !(aprc.status==='0x1'||aprc.status===1)){
+          swStatus('Token approval failed. Cannot sell without it.','err'); btn.disabled=false; btn.textContent='Try again'; return;
+        }
+        // approval just mined — the permit/quote may be stale now. Re-quote so the
+        // /swap call is built against the fresh, now-approved state.
+        swStatus('Approved. Refreshing quote\u2026','');
+        await swGetQuote();
+        if(!_swapState.quote){ swStatus('Could not refresh quote after approval.','err'); btn.disabled=false; btn.textContent='Try again'; return; }
       }
     }
 
-    // 2. build the swap tx via /swap (needs the quote; CLASSIC also needs a permit signature)
+    // 2. build the swap tx via /swap.
+    // The /swap body carries the FULL quote response under `quote` plus the
+    // permit signature. Never send permitData:null — omit it entirely if absent.
     btn.innerHTML='<span class="spin"></span> Preparing swap\u2026';
     const swapReq = { quote:_swapState.quote.quote };
-    // CLASSIC route: sign the Permit2 typed data and include it
     const permit=_swapState.quote.permitData;
     if(permit){
       swStatus('Sign the swap permission (no gas) \u2014 in your wallet.','');
@@ -1470,8 +1479,11 @@ async function swExecute(){
     }
     const sw = await swPost('swap', swapReq);
     if(!sw.ok || !sw.data || !sw.data.swap || !sw.data.swap.data){
-      const m=(sw.data&&(sw.data.detail||sw.data.errorCode||sw.data.message))||'Swap could not be built (quote may have expired).';
-      swStatus(String(m),'err'); btn.disabled=false; btn.textContent='Try again'; return;
+      const d=sw.data||{};
+      const m=d.detail||d.errorCode||d.message||('Swap could not be built (HTTP '+sw.status+'). The quote may have expired \u2014 try again.');
+      swStatus(String(m),'err');
+      console.warn('[swap] /swap failed:', sw.status, d);
+      btn.disabled=false; btn.textContent='Try again'; return;
     }
 
     // 3. send the swap tx
