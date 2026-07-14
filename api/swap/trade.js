@@ -41,16 +41,13 @@ export default async function handler(req) {
   const payload = { ...body };
   delete payload.action;
 
-  // /swap gotcha: the Trading API wants the quote RESPONSE fields spread into
-  // the body, NOT nested under { quote: {...} }. The client sends us
-  // { quote, signature, permitData }; here we spread `quote` up and keep
-  // signature/permitData alongside. Never forward permitData: null.
-  if (action === 'swap' && payload.quote && typeof payload.quote === 'object') {
-    const { quote, signature, permitData, ...rest } = payload;
-    const merged = { ...rest, ...quote };
-    if (signature != null) merged.signature = signature;
-    if (permitData != null) merged.permitData = permitData;   // omit when null
-    return forward(path, merged, key);
+  // For /swap: the API expects { quote: <quote object>, signature, permitData }.
+  // The client already sends exactly that shape. Do NOT spread the quote — the
+  // endpoint requires it under a `quote` key ("quote is required" otherwise).
+  // Just strip permitData if it's null (never forward permitData: null).
+  if (action === 'swap') {
+    if (payload.permitData == null) delete payload.permitData;
+    return forward(path, payload, key);
   }
 
   // Pin the chain on quote/check_approval so the swap can't be retargeted.
