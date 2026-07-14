@@ -378,7 +378,11 @@ body.exploring .wrap{padding-bottom:64px}
 .sw-buy{background:var(--green);color:#000}
 .sw-sell{background:var(--surface-2);color:var(--fg);border:1px solid var(--line)}
 .sw-buy:hover{filter:brightness(1.07)} .sw-sell:hover{border-color:var(--fg-dim)}
-.sw-go::after{content:"97";font-size:12px;opacity:.7}
+
+.scanner-btn{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);
+  border-radius:9px;padding:9px 15px;margin:0 auto 18px;text-decoration:none;color:var(--fg-dim);
+  font-weight:700;font-size:13px;transition:.14s;width:fit-content}
+.scanner-btn:hover{border-color:var(--green-dim);color:var(--fg)}
 </style>
 </head>
 <body>
@@ -389,6 +393,7 @@ body.exploring .wrap{padding-bottom:64px}
     <span class="members-badge">Members</span>
   </div>
   <p class="sub">Holder-only tools for the Robinhood Chain ecosystem.</p>
+  <a class="scanner-btn" href="/">← Back to Scanner</a>
   <div id="view"></div>
   <div class="foot">
     The scanner stays free and open at <a href="/">robinscan4u.com</a> — no wallet, no signature.<br>
