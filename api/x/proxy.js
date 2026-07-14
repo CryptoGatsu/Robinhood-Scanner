@@ -13,6 +13,7 @@ const ALLOWED = [
   /^\/api\/v2\/blocks(\/[^/]+)?(\/transactions)?$/,
   /^\/api\/v2\/transactions(\/[0-9a-fx]+)?(\/token-transfers|\/logs)?$/i,
   /^\/api\/v2\/addresses\/[0-9a-fx]+(\/transactions|\/token-transfers|\/tokens|\/token-balances|\/counters|\/coin-balance-history-by-day|\/coin-balance-history)?$/i,
+  /^\/api\/v2\/smart-contracts\/[0-9a-fx]+$/i,
   /^\/api\/v2\/tokens\/[0-9a-fx]+(\/holders|\/counters|\/transfers)?$/i,
   /^\/api\/v2\/search$/,
   /^\/api\/v2\/stats$/,

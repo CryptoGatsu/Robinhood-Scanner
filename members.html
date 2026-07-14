@@ -297,6 +297,32 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .bb-w{font-size:10px;font-family:var(--mono);color:var(--fg-faint)}
 /* keep content clear of the fixed banner */
 body.exploring .wrap{padding-bottom:64px}
+
+.bb-waiting{display:flex;align-items:center;gap:8px;padding:0 16px;font-size:12px;color:var(--fg-dim);font-family:var(--mono)}
+.bb-pulse{width:8px;height:8px;border-radius:50%;background:var(--green);animation:bbpulse 1.6s ease-in-out infinite}
+@keyframes bbpulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+
+.tok-contract{margin-top:4px}
+.ci-status{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;padding:10px 13px;border-radius:9px}
+.ci-status .ci-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.ci-ver{background:rgba(0,200,5,.08);border:1px solid rgba(0,200,5,.28);color:var(--fg)}
+.ci-ver .ci-dot{background:var(--green);box-shadow:0 0 7px var(--green)}
+.ci-unver{background:rgba(255,176,32,.07);border:1px solid rgba(255,176,32,.3);color:var(--fg)}
+.ci-unver .ci-dot{background:var(--amber)}
+.ci-note{font-size:12px;color:var(--fg-dim);margin-top:8px;line-height:1.5}
+.ci-meta{font-size:11px;color:var(--fg-faint);font-family:var(--mono);margin-top:6px}
+.ci-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+@media(max-width:640px){.ci-cols{grid-template-columns:1fr}}
+.ci-h{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--fg-faint);margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.ci-h span{background:var(--surface-2);border-radius:20px;padding:1px 8px;font-size:10px;color:var(--fg-dim)}
+.ci-fns{display:flex;flex-direction:column;gap:5px;max-height:280px;overflow-y:auto}
+.ci-fn{padding:7px 10px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line)}
+.ci-fn code{font-size:11px;font-family:var(--mono);color:var(--fg-dim);word-break:break-word}
+.ci-read code{color:var(--green)}
+.ci-write code{color:var(--amber)}
+.ci-empty{font-size:12px;color:var(--fg-faint);padding:6px}
+.ci-link{display:inline-block;margin-top:14px;font-size:12.5px;color:var(--green);text-decoration:none;font-weight:600}
+.ci-link:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -449,7 +475,9 @@ async function pollBuyBanner(){
     events.push({ id, kind:isBuy?'buy':'sell', amt, wallet:isBuy?to:from,
       tx:(t.tx_hash||t.transaction_hash||'') });
   }
-  if(_bannerFirst){ events.forEach(e=>_bannerSeen[e.id]=true); _bannerFirst=false; renderBuyBanner(events); return; }
+  // First poll: mark everything as already-seen and show a waiting state.
+  // We do NOT dump the backlog — chips only appear as NEW swaps happen.
+  if(_bannerFirst){ events.forEach(e=>_bannerSeen[e.id]=true); _bannerFirst=false; showBannerWaiting(); return; }
   const fresh = events.filter(e=>!_bannerSeen[e.id]);
   fresh.forEach(e=>_bannerSeen[e.id]=true);
   if(fresh.length) renderBuyBanner(fresh, true);
@@ -474,6 +502,15 @@ function renderBuyBanner(events, prepend){
     +'<div class="bb-track"><div class="bb-move">'+strip+strip+'</div></div>';
 }
 function SCOUT_TX(h){ return 'https://robinhoodchain.blockscout.com/tx/'+h; }
+
+// waiting state: banner is live but no new swap has happened yet this session
+function showBannerWaiting(){
+  const host = document.getElementById('buyBanner');
+  if(!host) return;
+  host.style.display='';
+  host.innerHTML = '<div class="bb-label">LIVE $ROBINSCAN</div>'
+    +'<div class="bb-waiting"><span class="bb-pulse"></span>watching for buys &amp; sells\u2026</div>';
+}
 
 // ---- fee claim (VladdyHook: owed/claimOwed, pays ETH to the connected wallet) ----
 // Hook contract address — fill in the deployed VladdyHook address.
@@ -1059,6 +1096,52 @@ async function appendAddressChart(addr){
   host.innerHTML = series.length>=2 ? areaChart(series,{title:'Balance over time (ETH)'}) : '';
 }
 
+// ---- contract info panel for the token page (verified status + functions) ----
+async function loadContractInfo(addr){
+  const host = document.getElementById('tokContractInfo');
+  if(!host) return;
+  const sc = await proxySoft('/api/v2/smart-contracts/'+addr);
+  if(!sc){
+    host.innerHTML = '<div class="ci-status ci-unver"><span class="ci-dot"></span>Not verified — no published source code</div>'
+      + '<div class="ci-note">This contract\u2019s source isn\u2019t verified on the explorer. You can still trade it, but you can\u2019t read its exact logic here. Unverified isn\u2019t automatically bad, but verified is safer.</div>';
+    return;
+  }
+  const verified = sc.is_verified || sc.is_fully_verified || (sc.abi && sc.abi.length);
+  const name = sc.name || null;
+  const compiler = sc.compiler_version || null;
+  const lang = sc.language || (sc.is_vyper_contract ? 'Vyper' : 'Solidity');
+
+  if(!verified){
+    host.innerHTML = '<div class="ci-status ci-unver"><span class="ci-dot"></span>Not verified</div>'
+      + '<div class="ci-note">Source code isn\u2019t published for this contract.</div>';
+    return;
+  }
+
+  // group ABI functions by read / write
+  const abi = sc.abi || [];
+  const fns = abi.filter(x=>x.type==='function');
+  const reads = fns.filter(f=>f.stateMutability==='view'||f.stateMutability==='pure'||f.constant);
+  const writes = fns.filter(f=>!(f.stateMutability==='view'||f.stateMutability==='pure'||f.constant));
+
+  const sig = f => {
+    const ins = (f.inputs||[]).map(i=>i.type+(i.name?(' '+i.name):'')).join(', ');
+    return f.name+'('+ins+')';
+  };
+  const fnList = (arr, cls) => arr.length
+    ? '<div class="ci-fns">'+arr.map(f=>'<div class="ci-fn '+cls+'"><code>'+esc(sig(f))+'</code></div>').join('')+'</div>'
+    : '<div class="ci-empty">none</div>';
+
+  host.innerHTML =
+    '<div class="ci-status ci-ver"><span class="ci-dot"></span>Verified'
+    + (name?(' \u00b7 '+esc(name)):'') + (lang?(' \u00b7 '+esc(lang)):'') + '</div>'
+    + (compiler?'<div class="ci-meta">Compiler '+esc(compiler)+'</div>':'')
+    + '<div class="ci-cols">'
+    + '<div class="ci-col"><div class="ci-h">Read functions <span>'+reads.length+'</span></div>'+fnList(reads,'ci-read')+'</div>'
+    + '<div class="ci-col"><div class="ci-h">Write functions <span>'+writes.length+'</span></div>'+fnList(writes,'ci-write')+'</div>'
+    + '</div>'
+    + '<a class="ci-link" href="https://robinhoodchain.blockscout.com/address/'+esc(addr)+'?tab=contract" target="_blank" rel="noopener">View full source on Blockscout \u2197</a>';
+}
+
 // ---- TOKEN view (memecoin scan: name/ticker/logo/holders + quick flags) ----
 async function showToken(addr){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
@@ -1145,8 +1228,11 @@ async function showToken(addr){
     +'<div class="exp-tabs"><button class="exp-tab active">Holder & bundle map</button></div>'
     + renderHolderBubbles(holderData)
     +'<div class="tok-bundlenote">Bubbles show holders by size. The large amber bubble is usually the LP. For the deep bundle + honeypot check, run the full scan:</div>'
+    +'<div class="exp-tabs"><button class="exp-tab active">Contract</button></div>'
+    +'<div id="tokContractInfo" class="tok-contract"><div class="exp-loading">loading contract info\u2026</div></div>'
     +'<a class="tok-fullscan" href="https://www.robinscan4u.com/?token='+esc(addr)+'" target="_blank" rel="noopener">Run full honeypot + sell-test scan on RobinScan \u2197</a>'
     +'</div>';
+  loadContractInfo(addr);
 }
 
 function tokStat(label,val){ return '<div class="tok-stat"><span class="ts-l">'+label+'</span><span class="ts-v">'+val+'</span></div>'; }
