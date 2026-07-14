@@ -258,6 +258,45 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .sc-coin:hover{border-color:var(--green-dim)}
 .sc-sym{font-weight:800;font-size:12.5px;color:var(--fg)}
 .sc-mc{font-family:var(--mono);font-size:11.5px;color:var(--green)}
+
+.tok-price{margin-left:auto;text-align:right}
+.tp-v{font-size:20px;font-weight:800;font-family:var(--mono);color:var(--fg)}
+.tp-ch{font-size:12px;font-weight:700}
+.tp-ch.up{color:var(--green)} .tp-ch.down{color:var(--red)}
+.tok-mktrow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+@media(max-width:520px){.tok-mktrow{grid-template-columns:1fr 1fr}}
+.tok-stat{background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;gap:2px}
+.ts-l{font-size:8.5px;font-weight:800;letter-spacing:.06em;color:var(--fg-faint)}
+.ts-v{font-size:14px;font-weight:800;font-family:var(--mono);color:var(--fg)}
+.tok-chart-h{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-faint);margin:6px 0}
+.tok-chart{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px}
+.tok-chart-note{font-size:10.5px;color:var(--fg-faint);margin-top:6px;text-align:center}
+.tok-entry{margin-top:14px;padding:13px 15px;border-radius:11px;border:1px solid var(--line)}
+.tok-entry .te-head{font-size:14px;font-weight:800;margin-bottom:3px}
+.tok-entry .te-body{font-size:12.5px;color:var(--fg-dim);line-height:1.55}
+.te-hot{background:rgba(0,200,5,.07);border-color:rgba(0,200,5,.3)} .te-hot .te-head{color:var(--green)}
+.te-ok{background:rgba(0,200,5,.05)} .te-ok .te-head{color:var(--green)}
+.te-warn{background:rgba(255,176,32,.07);border-color:rgba(255,176,32,.3)} .te-warn .te-head{color:var(--amber)}
+.te-muted .te-head{color:var(--fg)}
+.tok-bundlenote{font-size:11.5px;color:var(--fg-dim);margin-top:12px;line-height:1.5}
+
+.buy-banner{position:fixed;left:0;right:0;bottom:0;z-index:900;background:rgba(8,9,8,.96);border-top:1px solid var(--line);
+  backdrop-filter:blur(8px);display:flex;align-items:center;height:44px;overflow:hidden}
+.bb-label{flex:none;font-size:10px;font-weight:900;letter-spacing:.08em;color:var(--green);padding:0 14px;
+  border-right:1px solid var(--line);height:100%;display:flex;align-items:center;background:var(--surface)}
+.bb-track{flex:1;overflow:hidden;height:100%;display:flex;align-items:center}
+.bb-move{display:flex;gap:8px;white-space:nowrap;animation:bbscroll 40s linear infinite;padding-left:12px}
+.buy-banner:hover .bb-move{animation-play-state:paused}
+@keyframes bbscroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.bb-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;padding:5px 10px;text-decoration:none;flex:none}
+.bb-chip.bb-buy{border-color:rgba(0,200,5,.3)} .bb-chip.bb-sell{border-color:rgba(255,82,82,.3)}
+.bb-k{font-size:9px;font-weight:900;letter-spacing:.04em}
+.bb-buy .bb-k{color:var(--green)} .bb-sell .bb-k{color:var(--red)}
+.bb-a{font-size:11px;font-family:var(--mono);color:var(--fg)}
+.bb-w{font-size:10px;font-family:var(--mono);color:var(--fg-faint)}
+/* keep content clear of the fixed banner */
+body.exploring .wrap{padding-bottom:64px}
 </style>
 </head>
 <body>
@@ -370,6 +409,72 @@ async function boot(){
 }
 
 // ---------- explorer ----------
+// ---- live $ROBINSCAN buy/sell ticker (bottom banner) ----
+const RS_BANNER_TOKEN = '0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a';
+let _bannerSeen = {};
+let _bannerFirst = true;
+let _rsDecimals = 18;
+let _rsPools = {}; // addresses treated as LP/pool (transfers to = sell, from = buy)
+
+async function initBuyBanner(){
+  // find the LP pool address(es) via DexScreener (pairAddress)
+  try{
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/'+RS_BANNER_TOKEN,{headers:{accept:'application/json'}});
+    const j = await r.json();
+    (j.pairs||[]).filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()))
+      .forEach(p=>{ if(p.pairAddress) _rsPools[p.pairAddress.toLowerCase()]=true; });
+  }catch(e){}
+  pollBuyBanner();
+  setInterval(pollBuyBanner, 8000);
+}
+
+async function pollBuyBanner(){
+  const data = await proxySoft('/api/v2/tokens/'+RS_BANNER_TOKEN+'/transfers');
+  const items = data && (data.items||data) || [];
+  if(!items.length) return;
+  const events = [];
+  for(const t of items.slice(0,25)){
+    const from=(addrHash(t.from)||'').toLowerCase(), to=(addrHash(t.to)||'').toLowerCase();
+    const isBuy = _rsPools[from];   // tokens leaving the pool -> someone bought
+    const isSell = _rsPools[to];    // tokens going into the pool -> someone sold
+    if(!isBuy && !isSell) continue; // ignore plain wallet-to-wallet transfers
+    const id = (t.tx_hash||t.transaction_hash||'')+':'+from+':'+to;
+    if(!id || _bannerSeen[id]) continue;
+    let amt='';
+    try{
+      const raw = t.total&&t.total.value!=null?t.total.value:(t.value!=null?t.value:'0');
+      const dec = t.total&&t.total.decimals!=null?Number(t.total.decimals):_rsDecimals;
+      amt = (BigInt(String(raw).split('.')[0])/(10n**BigInt(dec))).toLocaleString();
+    }catch(e){}
+    events.push({ id, kind:isBuy?'buy':'sell', amt, wallet:isBuy?to:from,
+      tx:(t.tx_hash||t.transaction_hash||'') });
+  }
+  if(_bannerFirst){ events.forEach(e=>_bannerSeen[e.id]=true); _bannerFirst=false; renderBuyBanner(events); return; }
+  const fresh = events.filter(e=>!_bannerSeen[e.id]);
+  fresh.forEach(e=>_bannerSeen[e.id]=true);
+  if(fresh.length) renderBuyBanner(fresh, true);
+}
+
+let _bannerItems = [];
+function renderBuyBanner(events, prepend){
+  const host = document.getElementById('buyBanner');
+  if(!host) return;
+  if(prepend) _bannerItems = events.concat(_bannerItems).slice(0,30);
+  else _bannerItems = events.slice(0,30);
+  if(!_bannerItems.length){ host.style.display='none'; return; }
+  host.style.display='';
+  const chip = e =>
+    '<a class="bb-chip '+(e.kind==='buy'?'bb-buy':'bb-sell')+'" href="'+SCOUT_TX(e.tx)+'" target="_blank" rel="noopener">'
+    +'<span class="bb-k">'+(e.kind==='buy'?'BUY':'SELL')+'</span>'
+    +'<span class="bb-a">'+ (e.amt||'?') +' $ROBINSCAN</span>'
+    +'<span class="bb-w">'+shortAddr(e.wallet)+'</span></a>';
+  // duplicate the strip so the marquee loops seamlessly
+  const strip = _bannerItems.map(chip).join('');
+  host.innerHTML = '<div class="bb-label">LIVE $ROBINSCAN</div>'
+    +'<div class="bb-track"><div class="bb-move">'+strip+strip+'</div></div>';
+}
+function SCOUT_TX(h){ return 'https://robinhoodchain.blockscout.com/tx/'+h; }
+
 // ---- fee claim (VladdyHook: owed/claimOwed, pays ETH to the connected wallet) ----
 // Hook contract address — fill in the deployed VladdyHook address.
 const HOOK_ADDR = '0xAA33aae40B5C62E9bD0EF2b42163000CbB6780cC'; // deployed VladdyHook
@@ -511,6 +616,7 @@ function renderExplorer(address){
     +'<button id="expGo">Search</button>'
     +'</div>'
     +'<div id="expBody"></div>'
+    +'<div id="buyBanner" class="buy-banner" style="display:none"></div>'
     +'</div>';
   document.getElementById('expSignOut').addEventListener('click',function(){localStorage.removeItem(SESSION_KEY);boot();});
   const qi=document.getElementById('expQuery');
@@ -518,6 +624,7 @@ function renderExplorer(address){
   qi.addEventListener('keydown',e=>{ if(e.key==='Enter') routeSearch(qi.value.trim()); });
   renderFeeSection(address);
   renderLanding();
+  initBuyBanner();
 }
 
 function routeSearch(q){
@@ -564,25 +671,26 @@ async function loadStats(){
   const txChart = await proxySoft('/api/v2/stats/charts/transactions');
   const s = statsData || {};
   const gas = s.gas_prices || {};
-  const txSeries = (txChart && (txChart.chart_data||txChart.chart||txChart)) || [];
+  const txSeriesRaw = (txChart && (txChart.chart_data||txChart.chart||txChart)) || [];
+  const txSeries = Array.isArray(txSeriesRaw) ? txSeriesRaw : [];
   const txVals = txSeries.map(p=>Number(p.value!=null?p.value:p.tx_count!=null?p.tx_count:p)).filter(v=>isFinite(v));
 
   // synth a gentle series for stats that have no time chart (so every slide has one)
-  const synth = (base)=>{ const out=[]; let v=base*0.7; for(let i=0;i<16;i++){ v+= base*0.02*(Math.sin(i/2)+0.6); out.push(v);} out.push(base); return out; };
+  // (removed fake synth charts — only real time-series get a chart)
 
   statsSlides = [
     { label:'Gas tracker', value:(gas.average!=null?gas.average+' Gwei':(gas.slow!=null?gas.slow+' Gwei':'\u2014')),
       sub:(gas.fast!=null?('fast '+gas.fast+' \u00b7 slow '+(gas.slow!=null?gas.slow:'\u2014')):''),
-      series: gas.average?synth(Number(gas.average)):null, color:'var(--amber)' },
+      series: null, color:'var(--amber)' },
     { label:'Transactions today', value:statNum(s.transactions_today), sub:'in the last 24h',
-      series: txVals.length?txVals:synth(Number(s.transactions_today)||1000), color:'var(--green)' },
+      series: txVals.length?txVals:null, color:'var(--green)' },
     { label:'Total transactions', value:statNum(s.total_transactions), sub:'all time',
-      series: synth(Number(s.total_transactions)||1), color:'var(--green)' },
+      series: null, color:'var(--green)' },
     { label:'Total addresses', value:statNum(s.total_addresses), sub:'wallets seen',
-      series: synth(Number(s.total_addresses)||1), color:'var(--green)' },
+      series: null, color:'var(--green)' },
     { label:'Total blocks', value:statNum(s.total_blocks),
       sub:(s.average_block_time!=null?('~'+(Number(s.average_block_time)/1000).toFixed(1)+'s block time'):''),
-      series: synth(Number(s.total_blocks)||1), color:'var(--green)' },
+      series: null, color:'var(--green)' },
   ];
 
   statsIdx = 0;
@@ -620,18 +728,33 @@ async function loadRobinscanSlide(){
 let _showcase = [];
 async function loadShowcaseSlide(){
   try{
-    // pull Robinhood Chain pairs via DexScreener search, keep >$10k mcap
-    const r = await fetch('https://api.dexscreener.com/latest/dex/search?q=robinhood', {headers:{accept:'application/json'}});
-    const j = await r.json();
-    const seen={};
-    const coins = (j.pairs||[])
-      .filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()))
-      .map(p=>({ addr:(p.baseToken&&p.baseToken.address||'').toLowerCase(), sym:p.baseToken&&p.baseToken.symbol,
-                 mcap:p.marketCap||p.fdv||0, liq:(p.liquidity&&p.liquidity.usd)||0,
-                 buys:(p.txns&&p.txns.h24&&p.txns.h24.buys)||0, sells:(p.txns&&p.txns.h24&&p.txns.h24.sells)||0 }))
-      .filter(c=>c.addr && c.mcap>=10000 && !seen[c.addr] && (seen[c.addr]=true))
-      // "not bundled" heuristic without a heavy scan: real two-sided trading + real liquidity
-      .filter(c=>c.liq>=2000 && (c.buys+c.sells)>=10);
+    // pull a broad set of Robinhood Chain pairs from multiple queries for variety
+    const queries = ['robinhood chain', 'robinhood', 'RSC'];
+    let allPairs = [];
+    for(const q of queries){
+      try{
+        const r = await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(q), {headers:{accept:'application/json'}});
+        const j = await r.json();
+        allPairs = allPairs.concat(j.pairs||[]);
+      }catch(e){}
+    }
+    // normalize hard: many near-identical "$ROBINHOOD" clones exist — collapse them
+    const norm = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const bestBySym = {};   // one entry per normalized symbol, the highest-liquidity one
+    for(const p of allPairs){
+      if(!['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase())) continue;
+      const bt = p.baseToken||{};
+      const addr = (bt.address||'').toLowerCase();
+      const symKey = norm(bt.symbol);
+      if(!addr || !symKey) continue;
+      const c = { addr, sym:bt.symbol||'?', mcap:p.marketCap||p.fdv||0, liq:(p.liquidity&&p.liquidity.usd)||0,
+                  buys:(p.txns&&p.txns.h24&&p.txns.h24.buys)||0, sells:(p.txns&&p.txns.h24&&p.txns.h24.sells)||0 };
+      if(c.mcap<10000 || c.liq<2000 || (c.buys+c.sells)<10) continue;  // >$10k, real two-sided trading
+      // keep the highest-liquidity token per symbol (the "real" one, not the clones)
+      if(!bestBySym[symKey] || c.liq>bestBySym[symKey].liq) bestBySym[symKey]=c;
+    }
+    const coins = Object.values(bestBySym);
+    // shuffle for variety, take up to 8 DISTINCT tickers
     _showcase = coins.sort(()=>Math.random()-0.5).slice(0,8);
     if(_showcase.length){
       statsSlides.push({ label:'Robinhood Chain coins', value:'', sub:'', series:null, isShowcase:true });
@@ -940,10 +1063,11 @@ async function appendAddressChart(addr){
 async function showToken(addr){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
   expBody().innerHTML = backBar()+loading();
-  const [tok, counters, holdersResp] = await Promise.all([
+  const [tok, counters, holdersResp, dexResp] = await Promise.all([
     proxySoft('/api/v2/tokens/'+addr),
     proxySoft('/api/v2/tokens/'+addr+'/counters'),
     proxySoft('/api/v2/tokens/'+addr+'/holders'),
+    fetch('https://api.dexscreener.com/latest/dex/tokens/'+addr,{headers:{accept:'application/json'}}).then(r=>r.json()).catch(()=>null),
   ]);
   if(!tok){ expBody().innerHTML = backBar()+errBox('Could not load this token.'); return; }
 
@@ -956,7 +1080,18 @@ async function showToken(addr){
   const sym = tok.symbol||'?';
   const name = tok.name||'Unknown token';
 
-  // holder list for the bubble map + concentration flags
+  // --- market data from DexScreener ---
+  let mkt = null;
+  if(dexResp){
+    const pairs = (dexResp.pairs||[]).filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()));
+    const use = pairs.sort((a,b)=>((b.liquidity&&b.liquidity.usd)||0)-((a.liquidity&&a.liquidity.usd)||0))[0];
+    if(use) mkt = { price:parseFloat(use.priceUsd)||0, mcap:use.marketCap||use.fdv||0,
+      vol:(use.volume&&use.volume.h24)||0, liq:(use.liquidity&&use.liquidity.usd)||0,
+      ch:use.priceChange||{}, logo:(use.info&&use.info.imageUrl)||null };
+  }
+  const logoFinal = logo || (mkt&&mkt.logo);
+
+  // holder list for bubble map + concentration
   const hitems = (holdersResp && (holdersResp.items||holdersResp)) || [];
   const total = (()=>{ try{ return BigInt(String(supplyRaw).split('.')[0]); }catch(e){ return 0n; } })();
   const holderData = hitems.slice(0,40).map(h=>{
@@ -965,9 +1100,14 @@ async function showToken(addr){
     return { addr:a, pct };
   }).filter(h=>h.pct>0);
 
-  // quick risk flags (data-derived, no heavy sim — that lives in the full scanner)
   const top = holderData[0];
   const top5 = holderData.slice(0,5).reduce((s,h)=>s+h.pct,0);
+  const nonLp = holderData.filter(h=>h.pct<40); // exclude likely LP for the entry read
+
+  // --- entry analysis (data-driven, honest, not financial advice) ---
+  const entry = tokenEntry({ mkt, top, top5, holders: Number(holders)||holderData.length, holderData });
+
+  // quick concentration flags
   const flags = [];
   if(top && top.pct>=50) flags.push({sev:'warn',t:'Top holder controls '+top.pct.toFixed(1)+'% (may be the LP or a whale)'});
   else if(top && top.pct>=25) flags.push({sev:'warn',t:'Top holder controls '+top.pct.toFixed(1)+'%'});
@@ -975,29 +1115,83 @@ async function showToken(addr){
   if(holderData.length<10) flags.push({sev:'warn',t:'Few holders ('+holderData.length+') \u2014 early or thin'});
   if(!flags.length) flags.push({sev:'ok',t:'No obvious concentration flags in holder data'});
 
+  const chg = mkt ? (mkt.ch.h24!=null?mkt.ch.h24:0) : null;
+
   expBody().innerHTML = backBar()
     +'<div class="exp-detail">'
     +'<div class="tok-head">'
-    +(logo?'<img class="tok-logo" src="'+esc(logo)+'" alt="" onerror="this.style.display=\'none\'">':'<div class="tok-logo-ph">'+esc(sym.slice(0,3).toUpperCase())+'</div>')
+    +(logoFinal?'<img class="tok-logo" src="'+esc(logoFinal)+'" alt="" onerror="this.style.display=\'none\'">':'<div class="tok-logo-ph">'+esc(sym.slice(0,3).toUpperCase())+'</div>')
     +'<div class="tok-id"><div class="tok-name">'+esc(name)+'</div><div class="tok-sym">$'+esc(sym)+'</div></div>'
+    + (mkt?'<div class="tok-price"><div class="tp-v">'+(mkt.price?('$'+mkt.price.toPrecision(3)):'\u2014')+'</div>'
+        +'<div class="tp-ch '+(chg>=0?'up':'down')+'">'+(chg>=0?'+':'')+Number(chg).toFixed(1)+'% 24h</div></div>':'')
     +'</div>'
     +'<div class="tok-meta">'+esc(addr)+'</div>'
-    +'<div class="exp-kv">'
-    + kvRow('Holders', fmtNum(holders))
-    + kvRow('Total supply', supply)
-    + kvRow('Decimals', dec)
-    + (tok.type?kvRow('Type', esc(tok.type)):'')
-    +'</div>'
-    // quick flags
+    // market stats row
+    + (mkt?'<div class="tok-mktrow">'
+        + tokStat('MARKET CAP', statUsd(mkt.mcap))
+        + tokStat('24H VOLUME', statUsd(mkt.vol))
+        + tokStat('LIQUIDITY', statUsd(mkt.liq))
+        + tokStat('HOLDERS', fmtNum(holders))
+        +'</div>':'<div class="exp-kv">'+kvRow('Holders',fmtNum(holders))+kvRow('Total supply',supply)+'</div>')
+    // price trend sparkline (same style as the scanner)
+    + (mkt?'<div class="tok-chart-h">Price trend</div><div class="tok-chart">'+tokSparkline(mkt)+'</div>':'')
+    // entry analysis
+    +'<div class="tok-entry '+entry.cls+'"><div class="te-head">'+entry.head+'</div><div class="te-body">'+entry.body+'</div></div>'
+    // concentration flags
     +'<div class="tok-flags">'
     + flags.map(f=>'<div class="tok-flag '+(f.sev==='ok'?'tf-ok':'tf-warn')+'"><span class="tf-dot"></span>'+esc(f.t)+'</div>').join('')
     +'</div>'
-    // holder map (bubbles)
-    +'<div class="exp-tabs"><button class="exp-tab active">Holder map</button></div>'
+    // bundle / holder map
+    +'<div class="exp-tabs"><button class="exp-tab active">Holder & bundle map</button></div>'
     + renderHolderBubbles(holderData)
-    // deep link to the full scanner for the heavy honeypot/sell sim
+    +'<div class="tok-bundlenote">Bubbles show holders by size. The large amber bubble is usually the LP. For the deep bundle + honeypot check, run the full scan:</div>'
     +'<a class="tok-fullscan" href="https://www.robinscan4u.com/?token='+esc(addr)+'" target="_blank" rel="noopener">Run full honeypot + sell-test scan on RobinScan \u2197</a>'
     +'</div>';
+}
+
+function tokStat(label,val){ return '<div class="tok-stat"><span class="ts-l">'+label+'</span><span class="ts-v">'+val+'</span></div>'; }
+
+// price-trend sparkline from DexScreener change anchors (mirrors the scanner)
+function tokSparkline(mkt){
+  const price=mkt.price, ch=mkt.ch||{};
+  const at=p=>(typeof p==='number'&&isFinite(p))?price/(1+p/100):null;
+  const ys=[at(ch.h24),at(ch.h6),at(ch.h1),at(ch.m5),price].filter(v=>v!=null&&isFinite(v)&&v>0);
+  if(ys.length<2) return '<div class="exp-empty">not enough price data</div>';
+  const up=ys[ys.length-1]>=ys[0]; const color=up?'var(--green)':'var(--red)';
+  const W=600,H=90,pad=6;
+  const lo=Math.min(...ys),hi=Math.max(...ys),range=Math.max(hi-lo,hi*1e-9);
+  const x=i=>pad+(i/(ys.length-1))*(W-2*pad);
+  const y=v=>H-pad-((v-lo)/range)*(H-2*pad);
+  // smooth-ish line
+  const line=ys.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)).join(' ');
+  const area=line+' L'+(W-pad)+' '+H+' L'+pad+' '+H+' Z';
+  return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:90px;display:block">'
+    +'<defs><linearGradient id="tsk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+color+'" stop-opacity="0.28"/><stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="'+area+'" fill="url(#tsk)"/><path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="2.5" stroke-linejoin="round"/></svg>'
+    +'<div class="tok-chart-note">Trend shape from 24h/6h/1h/5m change \u2014 not tick-by-tick.</div>';
+}
+
+// entry analysis — describes what the data shows, never "buy/sell"
+function tokenEntry({ mkt, top, top5, holders, holderData }){
+  if(!mkt || !mkt.price){
+    return { cls:'te-muted', head:'Not enough market data', body:'No active DEX pair found, so there\u2019s no price or momentum to read yet.' };
+  }
+  const ch=mkt.ch||{}; const h1=ch.h1||0, h24=ch.h24||0;
+  const thin = mkt.liq<3000;
+  const concentrated = (top&&top.pct>=50) || top5>=85;
+  // safety gates first
+  if(concentrated){
+    return { cls:'te-warn', head:'Concentrated \u2014 handle with care',
+      body:'A small number of wallets hold most of the supply'+(top?' (top holder '+top.pct.toFixed(1)+'%)':'')+'. Price can move hard on a single sell. '+(thin?'Liquidity is also thin. ':'')+'This isn\u2019t financial advice.' };
+  }
+  let head, body, cls;
+  if(h1>8 && h24>0){ cls='te-hot'; head='Breaking up with momentum'; body='Up '+h1.toFixed(1)+'% in the last hour with buyers active. Momentum entries carry higher risk of buying a local top.'; }
+  else if(h24< -15){ cls='te-warn'; head='Falling'; body='Down '+Math.abs(h24).toFixed(1)+'% over 24h. No sign of a floor in the data yet.'; }
+  else if(Math.abs(h1)<3 && Math.abs(h24)<8){ cls='te-muted'; head='Ranging \u2014 no clear edge'; body='Price is flat across recent windows. Nothing in the data points strongly either way right now.'; }
+  else if(h24>0){ cls='te-ok'; head='Grinding up'; body='Gradual gains over 24h ('+h24.toFixed(1)+'%) with '+ (holders||'?') +' holders. Healthier than a vertical pump.'; }
+  else { cls='te-muted'; head='Mixed signals'; body='Short and daily trends disagree. Wait for the data to line up.'; }
+  if(thin) body += ' Liquidity is thin ('+statUsd(mkt.liq)+'), so slippage will be high.';
+  return { cls, head, body:body+' This is what the data shows, not financial advice.' };
 }
 
 function renderHolderBubbles(holders){
