@@ -41,18 +41,39 @@ export default async function handler(req) {
   const payload = { ...body };
   delete payload.action;
 
+  // /swap gotcha: the Trading API wants the quote RESPONSE fields spread into
+  // the body, NOT nested under { quote: {...} }. The client sends us
+  // { quote, signature, permitData }; here we spread `quote` up and keep
+  // signature/permitData alongside. Never forward permitData: null.
+  if (action === 'swap' && payload.quote && typeof payload.quote === 'object') {
+    const { quote, signature, permitData, ...rest } = payload;
+    const merged = { ...rest, ...quote };
+    if (signature != null) merged.signature = signature;
+    if (permitData != null) merged.permitData = permitData;   // omit when null
+    return forward(path, merged, key);
+  }
+
   // Pin the chain on quote/check_approval so the swap can't be retargeted.
   if (action === 'quote') {
     payload.tokenInChainId = CHAIN_ID;
     payload.tokenOutChainId = CHAIN_ID;
     // force the connected wallet as swapper — never trust a client-supplied one
     payload.swapper = address;
+    // Force CLASSIC routing. UniswapX routes are gasless off-chain ORDERS that
+    // must be POSTed to /order, not sent as transactions — a different flow.
+    // Restricting to CLASSIC guarantees /swap returns a signable transaction.
+    payload.routingPreference = 'CLASSIC';
   }
   if (action === 'check_approval') {
     payload.chainId = CHAIN_ID;
     payload.walletAddress = address;
   }
 
+  return forward(path, payload, key);
+}
+
+// POST a payload to the Trading API and pass the response straight through.
+async function forward(path, payload, key) {
   try {
     const upstream = await fetch(TRADE_API + path, {
       method: 'POST',
@@ -65,7 +86,6 @@ export default async function handler(req) {
       body: JSON.stringify(payload),
     });
     const text = await upstream.text();
-    // pass the Trading API response straight through (status + body)
     return new Response(text, {
       status: upstream.status,
       headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
