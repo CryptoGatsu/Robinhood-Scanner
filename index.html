@@ -213,6 +213,29 @@ body{margin:0;background:var(--bg);color:var(--fg);
 @media(min-width:1280px){
   .wrap{max-width:1240px}
 }
+
+.og-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:900;letter-spacing:.04em;
+  background:var(--green);color:#000;border-radius:5px;padding:2px 6px;margin-left:8px;vertical-align:middle}
+.og-badge.og-not{background:var(--amber);color:#000}
+.og-badge.og-sm{margin-left:6px;padding:1px 5px;font-size:9px}
+.dep-row{display:flex;gap:10px;align-items:baseline;margin:8px 0 2px;font-size:13px}
+.dep-k{color:var(--fg-faint);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.dep-v{color:var(--fg);font-family:var(--mono)}
+.dep-approx{color:var(--fg-faint);font-size:11px}
+.sim-head{font-size:13px;line-height:1.5;padding:11px 13px;border-radius:10px;margin-bottom:12px}
+.sim-head.sim-ok{background:rgba(0,200,5,.07);border:1px solid rgba(0,200,5,.25);color:var(--fg)}
+.sim-head.sim-warn{background:rgba(255,176,32,.07);border:1px solid rgba(255,176,32,.3);color:var(--fg)}
+.sim-list{display:flex;flex-direction:column;gap:8px}
+.sim-row{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px;cursor:pointer;
+  display:grid;grid-template-columns:1fr auto;gap:4px 12px;transition:border-color .12s}
+.sim-row:hover{border-color:var(--green-dim)}
+.sim-l{display:flex;flex-direction:column;min-width:0}
+.sim-sym{font-weight:800;font-size:14px;color:var(--fg);display:flex;align-items:center}
+.sim-name{font-size:12px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sim-r{display:flex;flex-direction:column;align-items:flex-end;font-size:11px;font-family:var(--mono)}
+.sim-age{color:var(--fg-dim)} .sim-liq{color:var(--fg-faint)}
+.sim-addr{grid-column:1/-1;font-family:var(--mono);font-size:10.5px;color:var(--fg-faint)}
+.sim-note{font-size:11px;color:var(--fg-faint);margin-top:10px;text-align:center}
 </style>
 </head>
 <body>
@@ -1382,6 +1405,7 @@ async function holdersFromChain(token, pool, pairCreatedAtMs) {
     creatorPct,
     sampleHolder: (real[0] && real[0].addr) || null,   // a real holder to sim a sell from
     bundle: { maxFunder: analysis2.maxFunder, funderAddr: analysis2.funderAddr, maxRecipients: 0, complete: true },
+    mintBlock: mintBlockFromLogs(logs),   // block of the first Transfer from ZERO (deploy)
     source: 'chain'
   };
 }
@@ -1449,6 +1473,169 @@ function analyzeFromLogs(logs, pool) {
   }
 
   return { creator, maxFunder, funderAddr, complete: true };
+}
+
+/* ============ mint date + OG detection + similar tokens ============
+   - mint date: timestamp of the block containing the very first Transfer
+     (from ZERO). Falls back to DexScreener pairCreatedAt.
+   - similar tokens: DexScreener search by symbol, filtered to Robinhood Chain.
+   - OG: among all tokens sharing the symbol, the earliest-created one.
+   DexScreener search has CORS, so this works from the browser (unlike Blockscout).
+*/
+
+const DEX_SEARCH = 'https://api.dexscreener.com/latest/dex/search?q=';
+const RH_CHAIN_IDS = ['robinhood', 'robinhoodchain', '4663'];
+
+// timestamp (ms) of a block number, via eth_getBlockByNumber
+async function blockTimestampMs(blockNum) {
+  try {
+    const hex = '0x' + Number(blockNum).toString(16);
+    const b = await rpc('eth_getBlockByNumber', [hex, false]);
+    if (b && b.timestamp) return parseInt(b.timestamp, 16) * 1000;
+  } catch (e) {}
+  return null;
+}
+
+// find the mint block from reconstructed logs (Transfer from ZERO)
+function mintBlockFromLogs(logs) {
+  if (!logs || !logs.length) return null;
+  for (const l of logs) {
+    if ((l.topics[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue;
+    const from = ('0x' + l.topics[1].slice(-40)).toLowerCase();
+    if (from === H_ZERO) return l.blockNumber ? parseInt(l.blockNumber, 16) : null;
+  }
+  return null;
+}
+
+// search DexScreener for all tokens sharing a symbol on Robinhood Chain
+async function findSimilarTokens(symbol, selfAddr) {
+  if (!symbol) return [];
+  try {
+    const r = await fetch(DEX_SEARCH + encodeURIComponent(symbol), { headers: { accept: 'application/json' } });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const pairs = (j.pairs || []).filter(p =>
+      RH_CHAIN_IDS.includes(String(p.chainId || '').toLowerCase()));
+    // collapse to one entry per token address (a token can have many pairs)
+    const byToken = {};
+    for (const p of pairs) {
+      const bt = p.baseToken || {};
+      const addr = (bt.address || '').toLowerCase();
+      if (!addr) continue;
+      // only tokens whose SYMBOL matches (case-insensitive) — search is fuzzy
+      if (String(bt.symbol || '').toLowerCase() !== String(symbol).toLowerCase()) continue;
+      const created = p.pairCreatedAt || null;
+      const liq = (p.liquidity && p.liquidity.usd) || 0;
+      if (!byToken[addr]) {
+        byToken[addr] = { addr, symbol: bt.symbol, name: bt.name || '', created, liq, mcap: p.marketCap || p.fdv || 0 };
+      } else {
+        // keep earliest created + highest liquidity seen
+        if (created && (!byToken[addr].created || created < byToken[addr].created)) byToken[addr].created = created;
+        if (liq > byToken[addr].liq) byToken[addr].liq = liq;
+      }
+    }
+    return Object.values(byToken);
+  } catch (e) { return []; }
+}
+
+/* Returns {
+     deployedMs, deployedFrom ('mint'|'pair'),
+     isOG (bool|null), ogAddr, similar: [ {addr,symbol,name,created,liq,mcap,isSelf,isOG} ]
+   } */
+async function analyzeDupes(selfAddr, symbol, mintBlock, pairCreatedAt) {
+  selfAddr = (selfAddr || '').toLowerCase();
+
+  // --- deploy date ---
+  let deployedMs = null, deployedFrom = null;
+  if (mintBlock) { deployedMs = await blockTimestampMs(mintBlock); if (deployedMs) deployedFrom = 'mint'; }
+  if (!deployedMs && pairCreatedAt) { deployedMs = pairCreatedAt; deployedFrom = 'pair'; }
+
+  // --- similar tokens by symbol ---
+  const all = await findSimilarTokens(symbol, selfAddr);
+  // make sure self is represented (search might miss it if it has no indexed pair)
+  const hasSelf = all.some(t => t.addr === selfAddr);
+  if (!hasSelf && symbol) {
+    all.push({ addr: selfAddr, symbol, name: '', created: (deployedFrom === 'pair' ? deployedMs : pairCreatedAt) || deployedMs, liq: 0, mcap: 0 });
+  }
+
+  // --- OG = earliest created among all sharing the symbol ---
+  let ogAddr = null, ogTime = Infinity;
+  for (const t of all) {
+    const c = t.addr === selfAddr && deployedMs ? deployedMs : t.created;
+    if (c && c < ogTime) { ogTime = c; ogAddr = t.addr; }
+  }
+  const isOG = ogAddr ? (ogAddr === selfAddr) : null;
+
+  // annotate + sort: OG first, then by age
+  const similar = all
+    .map(t => ({ ...t, isSelf: t.addr === selfAddr, isOG: t.addr === ogAddr }))
+    .sort((a, b) => (a.created || Infinity) - (b.created || Infinity));
+
+  return { deployedMs, deployedFrom, isOG, ogAddr, similar };
+}
+
+// format a deploy date like "Jul 3, 2026 · 10 days ago"
+function fmtDeployed(ms) {
+  if (!ms) return null;
+  const d = new Date(ms);
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  const rel = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
+  return date + ' \u00b7 ' + rel;
+}
+
+// ---- render the deploy date, OG badge, and similar-tokens list ----
+function renderDupes(dup, selfAddr, symbol) {
+  if (!dup) return;
+
+  // deploy date row on the token card
+  const deployRow = document.getElementById('deployRow');
+  if (deployRow && dup.deployedMs) {
+    const label = fmtDeployed(dup.deployedMs);
+    const approx = dup.deployedFrom === 'pair' ? ' <span class="dep-approx">(pair created)</span>' : '';
+    deployRow.innerHTML = '<div class="dep-row"><span class="dep-k">Deployed</span>'
+      + '<span class="dep-v">' + label + approx + '</span></div>';
+  }
+
+  // OG badge next to the ticker
+  const ogBadge = document.getElementById('ogBadge');
+  if (ogBadge && dup.isOG === true) {
+    ogBadge.outerHTML = '<span id="ogBadge" class="og-badge" title="Earliest token with this ticker">OG</span>';
+  } else if (ogBadge && dup.isOG === false && dup.ogAddr) {
+    ogBadge.outerHTML = '<span id="ogBadge" class="og-badge og-not" title="An older token shares this ticker">NOT OG</span>';
+  }
+
+  // similar tokens list (only if there are OTHER tokens sharing the ticker)
+  const others = (dup.similar || []).filter(t => !t.isSelf);
+  const card = document.getElementById('similarCard');
+  const body = document.getElementById('similarBody');
+  if (!card || !body || !others.length) return;
+
+  card.style.display = '';
+  // headline: is the scanned one the OG or a copy?
+  let head = '';
+  if (dup.isOG === true) {
+    head = '<div class="sim-head sim-ok">This is the original \u2014 ' + (others.length) + ' newer copy' + (others.length > 1 ? 'ies' : '') + ' share the ticker.</div>';
+  } else if (dup.isOG === false) {
+    head = '<div class="sim-head sim-warn">This is NOT the original $' + esc(symbol) + '. An older token shares this ticker \u2014 make sure it\u2019s the one you want.</div>';
+  } else {
+    head = '<div class="sim-head">' + others.length + ' other token' + (others.length > 1 ? 's' : '') + ' share this ticker.</div>';
+  }
+
+  const rows = others.map(t => {
+    const age = t.created ? fmtDeployed(t.created) : 'unknown age';
+    const liq = t.liq ? ('$' + (t.liq >= 1e6 ? (t.liq / 1e6).toFixed(1) + 'M' : (t.liq / 1e3).toFixed(1) + 'K') + ' liq') : 'no liquidity';
+    return '<div class="sim-row" onclick="location.href=\'?token=' + esc(t.addr) + '\'">'
+      + '<div class="sim-l">'
+      + '<span class="sim-sym">$' + esc(t.symbol || symbol) + (t.isOG ? '<span class="og-badge og-sm">OG</span>' : '') + '</span>'
+      + '<span class="sim-name">' + esc(t.name || '') + '</span></div>'
+      + '<div class="sim-r"><span class="sim-age">' + age + '</span><span class="sim-liq">' + liq + '</span></div>'
+      + '<div class="sim-addr">' + esc(t.addr.slice(0, 8) + '\u2026' + t.addr.slice(-6)) + '</div>'
+      + '</div>';
+  }).join('');
+
+  body.innerHTML = head + '<div class="sim-list">' + rows + '</div>'
+    + '<div class="sim-note">Only tokens with a DEX pair appear here. Tap one to scan it.</div>';
 }
 
 /* ================= scan orchestration + rendering ================= */
@@ -1607,6 +1794,14 @@ async function run() {
     const box = $('scanChart');
     if (box) renderSparkline(box, mkt);
 
+    // 9. deploy date + OG detection + similar-ticker tokens (async, fills in after)
+    (async () => {
+      try {
+        const dup = await analyzeDupes(addr, sym, (chainHolders && chainHolders.mintBlock), mkt && mkt.pairCreatedAt);
+        renderDupes(dup, addr, sym);
+      } catch (e) {}
+    })();
+
   } catch (e) {
     showErr('<b>Scan hit an error.</b> ' + esc(String(e.message || e)));
   } finally {
@@ -1659,8 +1854,9 @@ function render(d) {
   cards += '<div class="card tokcard" data-col="l">'
     + '<div class="tokhead">'
     + (d.mkt && d.mkt.logo ? '<img class="toklogo" src="' + esc(d.mkt.logo) + '" alt="" onerror="this.style.display=\'none\'">' : '<div class="toklogo-ph">' + esc((d.sym || '?').slice(0, 3).toUpperCase()) + '</div>')
-    + '<div><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '</div>'
+    + '<div><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '<span id="ogBadge"></span></div>'
     + '<div class="tokfull">' + esc(d.name || '') + '</div></div></div>'
+    + '<div id="deployRow"></div>'
     + '<div class="tokmeta">' + shortAddr(d.addr) + '</div>'
     + '<div class="toklinks">' + tlink('Explorer', SCOUT + '/token/' + d.addr)
     + tlink('DexScreener', 'https://dexscreener.com/robinhood/' + d.addr) + '</div></div>';
@@ -1669,6 +1865,11 @@ function render(d) {
     cards += '<div class="card bubcard" data-col="r"><div class="chart-h">Holder map</div>'
       + renderBubbles(d.mH.bubbles, d.mH.edges) + '</div>';
   }
+
+  // similar-ticker tokens (filled in async by renderDupes)
+  cards += '<div class="card" data-col="r" id="similarCard" style="display:none">'
+    + '<div class="chart-h">Same ticker \u2014 watch for dupes</div>'
+    + '<div id="similarBody"></div></div>';
 
   cards += '<div class="card" data-col="l">' + renderFindings(d) + '</div>';
 

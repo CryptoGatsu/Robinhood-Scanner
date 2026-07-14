@@ -208,6 +208,46 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .sdots{display:flex;gap:6px;margin-top:12px}
 .sdot{width:6px;height:6px;border-radius:50%;background:var(--line)}
 .sdot.on{background:var(--green)}
+
+.exp-chart{margin-top:16px}
+.exp-chart-h{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-faint);margin-bottom:6px}
+.exp-chart-svg{width:100%;height:90px;display:block}
+.tok-head{display:flex;align-items:center;gap:14px;margin-bottom:4px}
+.tok-logo{width:52px;height:52px;border-radius:50%;flex:none}
+.tok-logo-ph{width:52px;height:52px;border-radius:50%;background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--fg-dim);font-weight:800;flex:none}
+.tok-id .tok-name{font-size:19px;font-weight:800;letter-spacing:-.01em}
+.tok-id .tok-sym{font-size:14px;color:var(--green);font-family:var(--mono);font-weight:700}
+.tok-meta{font-family:var(--mono);font-size:11px;color:var(--fg-faint);word-break:break-all;margin-bottom:14px}
+.tok-flags{margin-top:14px;display:flex;flex-direction:column;gap:7px}
+.tok-flag{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:9px 12px;border-radius:9px;border:1px solid var(--line)}
+.tok-flag .tf-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.tf-warn{background:rgba(255,176,32,.06)}.tf-warn .tf-dot{background:var(--amber)}
+.tf-ok{background:rgba(0,200,5,.05)}.tf-ok .tf-dot{background:var(--green)}
+.hbubs{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:20px 10px;min-height:120px}
+.hbub{border-radius:50%;background:rgba(0,200,5,.14);border:1px solid var(--green-dim);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.12s}
+.hbub:hover{background:rgba(0,200,5,.26)}
+.hbub span{font-size:9px;color:var(--green);font-weight:700;font-family:var(--mono)}
+.hbub-big{background:rgba(255,176,32,.16);border-color:rgba(255,176,32,.4)}
+.hbub-big span{color:var(--amber)}
+.tok-fullscan{display:block;text-align:center;margin-top:18px;padding:13px;background:var(--green);color:#000;
+  border-radius:11px;font-weight:800;font-size:13.5px;text-decoration:none}
+.tok-fullscan:hover{filter:brightness(1.07)}
+.exp-tag-link{cursor:pointer;color:var(--green);border-color:var(--green-dim)}
+.exp-tag-link:hover{background:rgba(0,200,5,.12)}
+
+.fee-card{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,rgba(0,200,5,.09),var(--surface));
+  border:1px solid rgba(0,200,5,.28);border-radius:14px;padding:18px 20px;margin-bottom:14px;flex-wrap:wrap}
+.fee-left{flex:1;min-width:180px}
+.fee-label{font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint)}
+.fee-amount{font-size:30px;font-weight:900;letter-spacing:-.02em;color:var(--fg);font-family:var(--mono);line-height:1.1;margin-top:2px}
+.fee-amount span{font-size:15px;color:var(--green);font-weight:700}
+.fee-sub{font-size:12px;color:var(--fg-dim);margin-top:3px}
+.fee-btn{background:var(--green);color:#000;border:none;border-radius:11px;padding:14px 22px;font-weight:800;
+  font-size:14.5px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.fee-btn:hover:not(:disabled){filter:brightness(1.07)}
+.fee-btn:disabled{opacity:.5;cursor:default;background:var(--surface-2);color:var(--fg-dim)}
+.fee-status{font-size:12px;color:var(--fg-dim);font-family:var(--mono);margin:-6px 2px 14px;min-height:16px}
+.fee-status.ok{color:var(--green)} .fee-status.err{color:var(--red)}
 </style>
 </head>
 <body>
@@ -320,6 +360,90 @@ async function boot(){
 }
 
 // ---------- explorer ----------
+// ---- fee claim (VladdyHook: owed/claimOwed, pays ETH to the connected wallet) ----
+// Hook contract address — fill in the deployed VladdyHook address.
+const HOOK_ADDR = '0xAA33aae40B5C62E9bD0EF2b42163000CbB6780cC'; // deployed VladdyHook
+const SEL_OWED = '0xdf18e047';      // owed(address)
+const SEL_CLAIM = '0xf2652d9c';     // claimOwed()
+
+function feeEth(wei){
+  try{
+    const v=BigInt(String(wei));
+    const whole=v/(10n**18n), frac=(v%(10n**18n)).toString().padStart(18,'0').replace(/0+$/,'');
+    return frac ? (whole.toString()+'.'+frac.slice(0,6)) : whole.toString();
+  }catch(e){ return '0'; }
+}
+
+// read owed(wallet) via the wallet's own RPC (public read, no gas, no signature)
+async function readOwed(wallet){
+  if(!window.ethereum) return null;
+  if(/^0x0+$/.test(HOOK_ADDR)) return null; // not configured yet
+  const data = SEL_OWED + wallet.toLowerCase().replace('0x','').padStart(64,'0');
+  try{
+    const res = await window.ethereum.request({ method:'eth_call', params:[{ to:HOOK_ADDR, data }, 'latest'] });
+    if(!res || res==='0x') return 0n;
+    return BigInt(res);
+  }catch(e){ return null; }
+}
+
+async function renderFeeSection(wallet){
+  const host = document.getElementById('feeSection');
+  if(!host) return;
+  if(/^0x0+$/.test(HOOK_ADDR)){ host.innerHTML=''; return; } // hidden until configured
+  const owed = await readOwed(wallet);
+  if(owed===null){ host.innerHTML=''; return; }
+  const has = owed>0n;
+  host.innerHTML =
+    '<div class="fee-card">'
+    +'<div class="fee-left">'
+    +'<div class="fee-label">Claimable trading fees</div>'
+    +'<div class="fee-amount">'+feeEth(owed)+' <span>ETH</span></div>'
+    +'<div class="fee-sub">'+(has?'Accrued from tokens you receive fees on':'No fees to claim right now')+'</div>'
+    +'</div>'
+    +'<button class="fee-btn" id="feeClaimBtn"'+(has?'':' disabled')+'>'+(has?'Claim to wallet':'Nothing to claim')+'</button>'
+    +'</div>'
+    +'<div class="fee-status" id="feeStatus"></div>';
+  const btn=document.getElementById('feeClaimBtn');
+  if(btn && has) btn.addEventListener('click',()=>claimFees(wallet));
+}
+
+function feeStatus(msg,cls){ const s=document.getElementById('feeStatus'); if(s){ s.textContent=msg||''; s.className='fee-status'+(cls?' '+cls:''); } }
+
+async function claimFees(wallet){
+  const btn=document.getElementById('feeClaimBtn');
+  if(!window.ethereum){ feeStatus('No wallet found.','err'); return; }
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span> Confirm in wallet\u2026';
+  feeStatus('This sends a transaction from your wallet to claim your ETH.','');
+  try{
+    const txHash = await window.ethereum.request({
+      method:'eth_sendTransaction',
+      params:[{ from:wallet, to:HOOK_ADDR, data:SEL_CLAIM }],
+    });
+    feeStatus('Claim submitted \u2014 waiting for confirmation\u2026','');
+    btn.innerHTML='<span class="spin"></span> Confirming\u2026';
+    // poll for the receipt
+    let receipt=null, tries=0;
+    while(!receipt && tries<40){
+      await new Promise(r=>setTimeout(r,1500)); tries++;
+      try{ receipt = await window.ethereum.request({ method:'eth_getTransactionReceipt', params:[txHash] }); }catch(e){}
+    }
+    if(receipt && (receipt.status==='0x1'||receipt.status===1)){
+      feeStatus('Claimed. ETH is on its way to your wallet.','ok');
+      setTimeout(()=>renderFeeSection(wallet), 2500); // refresh owed (should be 0)
+    } else if(receipt){
+      feeStatus('Claim transaction failed on-chain.','err');
+      btn.disabled=false; btn.textContent='Try again';
+    } else {
+      feeStatus('Submitted. Check your wallet for confirmation.','');
+    }
+  }catch(e){
+    const m=(e&&e.message)||String(e);
+    if(/reject|denied/i.test(m)) feeStatus('Claim cancelled. Nothing was sent.','');
+    else feeStatus(m,'err');
+    btn.disabled=false; btn.textContent='Claim to wallet';
+  }
+}
+
 function authToken(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY)||'{}').token||''; }catch(e){ return ''; } }
 
 async function proxy(path, q){
@@ -371,6 +495,7 @@ function renderExplorer(address){
     +'<div class="exp-badge"><span class="dot"></span><span>Holder</span><span class="addr">'+shortAddr(address)+'</span></div>'
     +'<button class="exp-signout" id="expSignOut">Sign out</button>'
     +'</div>'
+    +'<div id="feeSection"></div>'
     +'<div class="exp-search">'
     +'<input id="expQuery" placeholder="Search address, tx hash, block, or token\u2026" autocomplete="off" spellcheck="false">'
     +'<button id="expGo">Search</button>'
@@ -381,6 +506,7 @@ function renderExplorer(address){
   const qi=document.getElementById('expQuery');
   document.getElementById('expGo').addEventListener('click',()=>routeSearch(qi.value.trim()));
   qi.addEventListener('keydown',e=>{ if(e.key==='Enter') routeSearch(qi.value.trim()); });
+  renderFeeSection(address);
   renderLanding();
 }
 
@@ -542,6 +668,7 @@ async function showAddress(addr){
     +'<h2>'+esc(addr)+'</h2>'
     +'<div class="exp-tags"><span class="exp-tag">'+typeLabel+'</span>'
     + (hasDelegate?'<span class="exp-tag">delegated</span>':'')
+    + (d.token?'<span class="exp-tag exp-tag-link" onclick="showToken(\''+addr+'\')">view as token \u2197</span>':'')
     +'</div></div>'
     +'<div class="exp-kv">'
     + kvRow('Balance', fmtEth(d.coin_balance))
@@ -556,6 +683,7 @@ async function showAddress(addr){
     +'<button class="exp-tab" data-tab="transfers">Token transfers</button>'
     +'</div>'
     +'<div id="addrTabBody">'+loading()+'</div>'
+    +'<div id="addrChart"></div>'
     +'</div>';
 
   const tabBody = () => document.getElementById('addrTabBody');
@@ -616,6 +744,7 @@ async function showAddress(addr){
     });
   });
   loadTab('txns');
+  appendAddressChart(addr);
 }
 
 // ---- TRANSACTION view ----
@@ -675,6 +804,118 @@ async function showBlock(num){
   }).join('') : '<div class="exp-empty">no transactions</div>';
 }
 
+// ---- simple SVG area chart (bottom of detail sections) ----
+function areaChart(series, opts){
+  opts = opts || {};
+  const vals = (series||[]).map(p=>Number(p.value!=null?p.value:p)).filter(v=>isFinite(v));
+  if(vals.length<2) return '';
+  const W=600,H=90,pad=6;
+  const lo=Math.min(...vals),hi=Math.max(...vals),range=Math.max(hi-lo,Math.abs(hi)*1e-9,1e-9);
+  const x=i=>pad+(i/(vals.length-1))*(W-2*pad);
+  const y=v=>H-pad-((v-lo)/range)*(H-2*pad);
+  const line=vals.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)).join(' ');
+  const area=line+' L'+(W-pad)+' '+H+' L'+pad+' '+H+' Z';
+  const c=opts.color||'var(--green)';
+  return '<div class="exp-chart"><div class="exp-chart-h">'+(opts.title||'')+'</div>'
+    +'<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="exp-chart-svg">'
+    +'<defs><linearGradient id="ac" x1="0" y1="0" x2="0" y2="1">'
+    +'<stop offset="0" stop-color="'+c+'" stop-opacity="0.28"/><stop offset="1" stop-color="'+c+'" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="'+area+'" fill="url(#ac)"/><path d="'+line+'" fill="none" stroke="'+c+'" stroke-width="2" stroke-linejoin="round"/>'
+    +'</svg></div>';
+}
+
+// load + append a balance-history chart to the address detail
+async function appendAddressChart(addr){
+  const host=document.getElementById('addrChart'); if(!host) return;
+  const h = await proxySoft('/api/v2/addresses/'+addr+'/coin-balance-history-by-day');
+  const items = (h && (h.items||h.days||h)) || [];
+  // shape: [{date, value}] where value may be wei -> normalize to ETH float
+  const series = items.map(p=>{
+    let v=p.value!=null?p.value:p.balance;
+    try{ v=Number(BigInt(String(v).split('.')[0])/(10n**15n))/1000; }catch(e){ v=Number(v); }
+    return { value:v };
+  }).filter(p=>isFinite(p.value));
+  host.innerHTML = series.length>=2 ? areaChart(series,{title:'Balance over time (ETH)'}) : '';
+}
+
+// ---- TOKEN view (memecoin scan: name/ticker/logo/holders + quick flags) ----
+async function showToken(addr){
+  if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
+  expBody().innerHTML = backBar()+loading();
+  const [tok, counters, holdersResp] = await Promise.all([
+    proxySoft('/api/v2/tokens/'+addr),
+    proxySoft('/api/v2/tokens/'+addr+'/counters'),
+    proxySoft('/api/v2/tokens/'+addr+'/holders'),
+  ]);
+  if(!tok){ expBody().innerHTML = backBar()+errBox('Could not load this token.'); return; }
+
+  const dec = Number(tok.decimals||18);
+  const supplyRaw = tok.total_supply||'0';
+  let supply='\u2014';
+  try{ supply=(BigInt(String(supplyRaw).split('.')[0])/(10n**BigInt(dec))).toLocaleString(); }catch(e){}
+  const holders = tok.holders||tok.holder_count||(counters&&counters.token_holders_count)||'\u2014';
+  const logo = tok.icon_url||tok.image_url||(tok.token&&tok.token.icon_url)||null;
+  const sym = tok.symbol||'?';
+  const name = tok.name||'Unknown token';
+
+  // holder list for the bubble map + concentration flags
+  const hitems = (holdersResp && (holdersResp.items||holdersResp)) || [];
+  const total = (()=>{ try{ return BigInt(String(supplyRaw).split('.')[0]); }catch(e){ return 0n; } })();
+  const holderData = hitems.slice(0,40).map(h=>{
+    let pct=0; try{ const v=BigInt(String(h.value||'0').split('.')[0]); pct= total>0n? Number(v*10000n/total)/100 : 0; }catch(e){}
+    const a = (h.address&&h.address.hash)||h.address_hash||h.address||'';
+    return { addr:a, pct };
+  }).filter(h=>h.pct>0);
+
+  // quick risk flags (data-derived, no heavy sim — that lives in the full scanner)
+  const top = holderData[0];
+  const top5 = holderData.slice(0,5).reduce((s,h)=>s+h.pct,0);
+  const flags = [];
+  if(top && top.pct>=50) flags.push({sev:'warn',t:'Top holder controls '+top.pct.toFixed(1)+'% (may be the LP or a whale)'});
+  else if(top && top.pct>=25) flags.push({sev:'warn',t:'Top holder controls '+top.pct.toFixed(1)+'%'});
+  if(top5>=80) flags.push({sev:'warn',t:'Top 5 hold '+top5.toFixed(0)+'% \u2014 concentrated'});
+  if(holderData.length<10) flags.push({sev:'warn',t:'Few holders ('+holderData.length+') \u2014 early or thin'});
+  if(!flags.length) flags.push({sev:'ok',t:'No obvious concentration flags in holder data'});
+
+  expBody().innerHTML = backBar()
+    +'<div class="exp-detail">'
+    +'<div class="tok-head">'
+    +(logo?'<img class="tok-logo" src="'+esc(logo)+'" alt="" onerror="this.style.display=\'none\'">':'<div class="tok-logo-ph">'+esc(sym.slice(0,3).toUpperCase())+'</div>')
+    +'<div class="tok-id"><div class="tok-name">'+esc(name)+'</div><div class="tok-sym">$'+esc(sym)+'</div></div>'
+    +'</div>'
+    +'<div class="tok-meta">'+esc(addr)+'</div>'
+    +'<div class="exp-kv">'
+    + kvRow('Holders', fmtNum(holders))
+    + kvRow('Total supply', supply)
+    + kvRow('Decimals', dec)
+    + (tok.type?kvRow('Type', esc(tok.type)):'')
+    +'</div>'
+    // quick flags
+    +'<div class="tok-flags">'
+    + flags.map(f=>'<div class="tok-flag '+(f.sev==='ok'?'tf-ok':'tf-warn')+'"><span class="tf-dot"></span>'+esc(f.t)+'</div>').join('')
+    +'</div>'
+    // holder map (bubbles)
+    +'<div class="exp-tabs"><button class="exp-tab active">Holder map</button></div>'
+    + renderHolderBubbles(holderData)
+    // deep link to the full scanner for the heavy honeypot/sell sim
+    +'<a class="tok-fullscan" href="https://www.robinscan4u.com/?token='+esc(addr)+'" target="_blank" rel="noopener">Run full honeypot + sell-test scan on RobinScan \u2197</a>'
+    +'</div>';
+}
+
+function renderHolderBubbles(holders){
+  if(!holders.length) return '<div class="exp-empty">no holder data</div>';
+  const max = Math.max(...holders.map(h=>h.pct),1);
+  const bubbles = holders.slice(0,24).map(h=>{
+    const size = 26 + (h.pct/max)*54; // 26-80px
+    const big = h.pct>=25;
+    return '<div class="hbub'+(big?' hbub-big':'')+'" style="width:'+size+'px;height:'+size+'px" '
+      +'title="'+esc(h.addr)+' \u2014 '+h.pct.toFixed(2)+'%" '
+      +'onclick="showAddress(\''+esc(h.addr)+'\')">'
+      +'<span>'+h.pct.toFixed(h.pct<1?1:0)+'%</span></div>';
+  }).join('');
+  return '<div class="hbubs">'+bubbles+'</div>';
+}
+
 // ---- SEARCH ----
 async function showSearch(q){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
@@ -686,7 +927,7 @@ async function showSearch(q){
     +(items.length ? items.slice(0,25).map(it=>{
       const type=it.type||'?';
       const label=it.name||it.address||it.address_hash||it.block_hash||it.tx_hash||it.transaction_hash||'';
-      const click = type==='address'||type==='contract'||type==='token' ? 'showAddress(\''+(it.address||it.address_hash)+'\')'
+      const click = type==='token' ? 'showToken(\''+(it.address||it.address_hash)+'\')' : type==='address'||type==='contract' ? 'showAddress(\''+(it.address||it.address_hash)+'\')'
         : type==='transaction' ? 'showTx(\''+(it.tx_hash||it.transaction_hash)+'\')'
         : type==='block' ? 'showBlock(\''+(it.block_number||it.block_hash)+'\')' : '';
       return '<div class="exp-lrow"'+(click?' onclick="'+click+'"':'')+'>'
