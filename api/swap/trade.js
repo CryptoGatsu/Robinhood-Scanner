@@ -62,6 +62,15 @@ export default async function handler(req) {
     // NOTE: routingPreference only accepts BEST_PRICE|FASTEST — it does NOT take
     // "CLASSIC". Protocol restriction is done via the `protocols` array.
     payload.protocols = ['V2', 'V3', 'V4'];
+    // Smart-account (7702/EIP-1271) wallets can't produce a standard Permit2
+    // ECDSA signature, so the permit-based swap reverts. When the client flags a
+    // smart-contract wallet, tell the API to build a LEGACY (direct-allowance)
+    // route with no permitData, per the "legacy for smart accounts" guidance.
+    if (payload.smartContractWallet === true) {
+      // keep the flag for the API; it drives the non-Permit2 route
+    } else {
+      delete payload.smartContractWallet;
+    }
   }
   if (action === 'check_approval') {
     payload.chainId = CHAIN_ID;

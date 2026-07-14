@@ -1266,6 +1266,14 @@ async function loadSwapBalances(){
     const acc = await window.ethereum.request({ method:'eth_accounts' });
     const w = acc && acc[0]; if(!w) return;
     _swapState.wallet = w;
+    // Detect a smart-account wallet (7702/EIP-1271): it has deployed code.
+    // Such wallets can't make a standard Permit2 ECDSA signature, so we route
+    // their swaps through the legacy (direct-allowance) path instead.
+    try{
+      const code = await window.ethereum.request({ method:'eth_getCode', params:[w,'latest'] });
+      _swapState.isSmartAccount = !!(code && code!=='0x' && code.length>2);
+      if(_swapState.isSmartAccount) console.log('[swap] smart-account wallet detected — using legacy approval path');
+    }catch(e){ _swapState.isSmartAccount=false; }
     // ETH balance
     const ethHex = await window.ethereum.request({ method:'eth_getBalance', params:[w,'latest'] });
     _swapState.ethBal = BigInt(ethHex||'0x0');
@@ -1378,7 +1386,10 @@ async function swGetQuote(){
   document.getElementById('swQuote').innerHTML='<div class="sw-quoting">getting best price\u2026</div>';
   swResetBtn();
   const slip = _swapState.slippage!=null ? _swapState.slippage : 2.5;
-  const { ok, data } = await swPost('quote', { type:'EXACT_INPUT', tokenIn, tokenOut, amount:amountWei, slippageTolerance:slip });
+  const quoteReq = { type:'EXACT_INPUT', tokenIn, tokenOut, amount:amountWei, slippageTolerance:slip };
+  // smart accounts -> legacy (non-Permit2) route
+  if(_swapState.isSmartAccount) quoteReq.smartContractWallet = true;
+  const { ok, data } = await swPost('quote', quoteReq);
   if(!ok || !data || !data.quote){
     const msg=(data&&(data.detail||data.errorCode||data.message))||'No route found for this pair/amount.';
     document.getElementById('swQuote').innerHTML='<div class="sw-quoteerr">'+esc(String(msg))+'</div>';
