@@ -214,27 +214,31 @@ body{margin:0;background:var(--bg);color:var(--fg);
   .wrap{max-width:1240px}
 }
 
-.og-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:900;letter-spacing:.04em;
-  background:var(--green);color:#000;border-radius:5px;padding:2px 6px;margin-left:8px;vertical-align:middle}
+
+.og-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:900;letter-spacing:.04em;background:var(--green);color:#000;border-radius:5px;padding:2px 6px;margin-left:8px;vertical-align:middle}
 .og-badge.og-not{background:var(--amber);color:#000}
 .og-badge.og-sm{margin-left:6px;padding:1px 5px;font-size:9px}
 .dep-row{display:flex;gap:10px;align-items:baseline;margin:8px 0 2px;font-size:13px}
 .dep-k{color:var(--fg-faint);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
 .dep-v{color:var(--fg);font-family:var(--mono)}
 .dep-approx{color:var(--fg-faint);font-size:11px}
-.sim-head{font-size:13px;line-height:1.5;padding:11px 13px;border-radius:10px;margin-bottom:12px}
+.sim-head{font-size:12.5px;line-height:1.5;padding:11px 13px;border-radius:10px;margin-bottom:12px}
 .sim-head.sim-ok{background:rgba(0,200,5,.07);border:1px solid rgba(0,200,5,.25);color:var(--fg)}
 .sim-head.sim-warn{background:rgba(255,176,32,.07);border:1px solid rgba(255,176,32,.3);color:var(--fg)}
-.sim-list{display:flex;flex-direction:column;gap:8px}
-.sim-row{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px;cursor:pointer;
-  display:grid;grid-template-columns:1fr auto;gap:4px 12px;transition:border-color .12s}
+.sim-list{display:flex;flex-direction:column;gap:7px}
+.sim-row{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 13px;cursor:pointer;transition:border-color .12s}
 .sim-row:hover{border-color:var(--green-dim)}
-.sim-l{display:flex;flex-direction:column;min-width:0}
-.sim-sym{font-weight:800;font-size:14px;color:var(--fg);display:flex;align-items:center}
-.sim-name{font-size:12px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sim-r{display:flex;flex-direction:column;align-items:flex-end;font-size:11px;font-family:var(--mono)}
-.sim-age{color:var(--fg-dim)} .sim-liq{color:var(--fg-faint)}
-.sim-addr{grid-column:1/-1;font-family:var(--mono);font-size:10.5px;color:var(--fg-faint)}
+.sim-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sim-sym{font-weight:800;font-size:13.5px;color:var(--fg);display:flex;align-items:center}
+.sim-age{font-size:11px;color:var(--fg-dim);font-family:var(--mono);white-space:nowrap;flex:none}
+.sim-bot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
+.sim-addr{font-family:var(--mono);font-size:10.5px;color:var(--fg-faint)}
+.sim-liq{font-family:var(--mono);font-size:10.5px;color:var(--fg-faint);flex:none}
+.sim-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px}
+.sim-pg{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;font-family:inherit}
+.sim-pg:hover:not(:disabled){border-color:var(--green-dim);color:var(--fg)}
+.sim-pg:disabled{opacity:.4;cursor:default}
+.sim-pgn{font-size:12px;color:var(--fg-faint);font-family:var(--mono)}
 .sim-note{font-size:11px;color:var(--fg-faint);margin-top:10px;text-align:center}
 </style>
 </head>
@@ -1584,7 +1588,20 @@ function fmtDeployed(ms) {
   return date + ' \u00b7 ' + rel;
 }
 
-// ---- render the deploy date, OG badge, and similar-tokens list ----
+// ---- render the deploy date, OG badge, and paged similar-tokens list ----
+let _simState = { others: [], page: 0, symbol: '', selfIsOG: null };
+const SIM_PER_PAGE = 10;
+
+function fmtDeployed(ms) {
+  if (!ms) return null;
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return null;
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  const rel = days < 0 ? '' : days === 0 ? 'today' : days === 1 ? 'yesterday' : days + 'd ago';
+  return rel ? (date + ' \u00b7 ' + rel) : date;
+}
+
 function renderDupes(dup, selfAddr, symbol) {
   if (!dup) return;
 
@@ -1593,7 +1610,7 @@ function renderDupes(dup, selfAddr, symbol) {
   if (deployRow && dup.deployedMs) {
     const label = fmtDeployed(dup.deployedMs);
     const approx = dup.deployedFrom === 'pair' ? ' <span class="dep-approx">(pair created)</span>' : '';
-    deployRow.innerHTML = '<div class="dep-row"><span class="dep-k">Deployed</span>'
+    if (label) deployRow.innerHTML = '<div class="dep-row"><span class="dep-k">Deployed</span>'
       + '<span class="dep-v">' + label + approx + '</span></div>';
   }
 
@@ -1605,37 +1622,65 @@ function renderDupes(dup, selfAddr, symbol) {
     ogBadge.outerHTML = '<span id="ogBadge" class="og-badge og-not" title="An older token shares this ticker">NOT OG</span>';
   }
 
-  // similar tokens list (only if there are OTHER tokens sharing the ticker)
   const others = (dup.similar || []).filter(t => !t.isSelf);
   const card = document.getElementById('similarCard');
   const body = document.getElementById('similarBody');
   if (!card || !body || !others.length) return;
 
   card.style.display = '';
-  // headline: is the scanned one the OG or a copy?
+  _simState = { others, page: 0, symbol, selfIsOG: dup.isOG };
+  renderSimPage();
+}
+
+function renderSimPage() {
+  const body = document.getElementById('similarBody');
+  if (!body) return;
+  const { others, page, symbol, selfIsOG } = _simState;
+  const total = others.length;
+  const pages = Math.ceil(total / SIM_PER_PAGE);
+  const start = page * SIM_PER_PAGE;
+  const slice = others.slice(start, start + SIM_PER_PAGE);
+
   let head = '';
-  if (dup.isOG === true) {
-    head = '<div class="sim-head sim-ok">This is the original \u2014 ' + (others.length) + ' newer copy' + (others.length > 1 ? 'ies' : '') + ' share the ticker.</div>';
-  } else if (dup.isOG === false) {
+  if (selfIsOG === true) {
+    head = '<div class="sim-head sim-ok">This is the original \u2014 ' + total + ' newer cop' + (total > 1 ? 'ies' : 'y') + ' share the ticker.</div>';
+  } else if (selfIsOG === false) {
     head = '<div class="sim-head sim-warn">This is NOT the original $' + esc(symbol) + '. An older token shares this ticker \u2014 make sure it\u2019s the one you want.</div>';
   } else {
-    head = '<div class="sim-head">' + others.length + ' other token' + (others.length > 1 ? 's' : '') + ' share this ticker.</div>';
+    head = '<div class="sim-head">' + total + ' other token' + (total > 1 ? 's' : '') + ' share this ticker.</div>';
   }
 
-  const rows = others.map(t => {
-    const age = t.created ? fmtDeployed(t.created) : 'unknown age';
-    const liq = t.liq ? ('$' + (t.liq >= 1e6 ? (t.liq / 1e6).toFixed(1) + 'M' : (t.liq / 1e3).toFixed(1) + 'K') + ' liq') : 'no liquidity';
+  const rows = slice.map(t => {
+    const age = t.created ? fmtDeployed(t.created) : null;
+    const liq = t.liq ? ('$' + (t.liq >= 1e6 ? (t.liq / 1e6).toFixed(1) + 'M' : (t.liq / 1e3).toFixed(1) + 'K')) : null;
     return '<div class="sim-row" onclick="location.href=\'?token=' + esc(t.addr) + '\'">'
-      + '<div class="sim-l">'
+      + '<div class="sim-top">'
       + '<span class="sim-sym">$' + esc(t.symbol || symbol) + (t.isOG ? '<span class="og-badge og-sm">OG</span>' : '') + '</span>'
-      + '<span class="sim-name">' + esc(t.name || '') + '</span></div>'
-      + '<div class="sim-r"><span class="sim-age">' + age + '</span><span class="sim-liq">' + liq + '</span></div>'
-      + '<div class="sim-addr">' + esc(t.addr.slice(0, 8) + '\u2026' + t.addr.slice(-6)) + '</div>'
-      + '</div>';
+      + '<span class="sim-age">' + (age || 'unknown age') + '</span>'
+      + '</div>'
+      + '<div class="sim-bot">'
+      + '<span class="sim-addr">' + esc(t.addr.slice(0, 8) + '\u2026' + t.addr.slice(-6)) + '</span>'
+      + '<span class="sim-liq">' + (liq ? liq + ' liq' : 'no LP') + '</span>'
+      + '</div></div>';
   }).join('');
 
-  body.innerHTML = head + '<div class="sim-list">' + rows + '</div>'
+  let pager = '';
+  if (pages > 1) {
+    pager = '<div class="sim-pager">'
+      + '<button class="sim-pg" ' + (page === 0 ? 'disabled' : 'onclick="simPage(-1)"') + '>\u2039 Prev</button>'
+      + '<span class="sim-pgn">' + (page + 1) + ' / ' + pages + '</span>'
+      + '<button class="sim-pg" ' + (page >= pages - 1 ? 'disabled' : 'onclick="simPage(1)"') + '>Next \u203a</button>'
+      + '</div>';
+  }
+
+  body.innerHTML = head + '<div class="sim-list">' + rows + '</div>' + pager
     + '<div class="sim-note">Only tokens with a DEX pair appear here. Tap one to scan it.</div>';
+}
+
+function simPage(delta) {
+  const pages = Math.ceil(_simState.others.length / SIM_PER_PAGE);
+  _simState.page = Math.max(0, Math.min(pages - 1, _simState.page + delta));
+  renderSimPage();
 }
 
 /* ================= scan orchestration + rendering ================= */
