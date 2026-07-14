@@ -360,6 +360,15 @@ body.exploring .wrap{padding-bottom:64px}
 .sw-pcts{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
 .sw-pct{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
 .sw-pct:hover{border-color:var(--green-dim);color:var(--fg)}
+
+.sw-sliprow{margin-bottom:12px}
+.sw-slip-l{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-faint);display:block;margin-bottom:6px}
+.sw-slips{display:flex;gap:6px;align-items:center}
+.sw-slip{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+.sw-slip:hover{border-color:var(--green-dim);color:var(--fg)}
+.sw-slip.on{background:var(--green);color:#000;border-color:var(--green)}
+.sw-slip-in{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--fg);font-family:var(--mono);font-size:12px}
+.sw-slip-in:focus{outline:none;border-color:var(--green-dim)}
 </style>
 </head>
 <body>
@@ -1211,6 +1220,13 @@ function renderSwapPanel(mkt, addr, sym){
     +'<div class="sw-inrow"><input id="swAmt" class="sw-amt" inputmode="decimal" placeholder="0.0" autocomplete="off">'
     +'<span class="sw-cur" id="swCur">ETH</span></div>'
     +'<div class="sw-pcts"><button class="sw-pct" data-p="10">10%</button><button class="sw-pct" data-p="25">25%</button><button class="sw-pct" data-p="50">50%</button><button class="sw-pct" data-p="100">MAX</button></div>'
+    +'<div class="sw-sliprow"><span class="sw-slip-l">Max slippage</span>'
+    +'<div class="sw-slips">'
+    +'<button class="sw-slip" data-s="0.5">0.5%</button>'
+    +'<button class="sw-slip on" data-s="2.5">2.5%</button>'
+    +'<button class="sw-slip" data-s="5">5%</button>'
+    +'<input id="swSlipCustom" class="sw-slip-in" inputmode="decimal" placeholder="custom" autocomplete="off">'
+    +'</div></div>'
     +'<div class="sw-quote" id="swQuote"></div>'
     +'<button class="sw-go sw-buy" id="swExec" disabled>Enter an amount</button>'
     +'<div class="sw-status" id="swStatus"></div>'
@@ -1223,6 +1239,10 @@ function renderSwapPanel(mkt, addr, sym){
   document.getElementById('swAmt').addEventListener('input', swOnAmount);
   document.getElementById('swExec').onclick = swExecute;
   host.querySelectorAll('.sw-pct').forEach(b=>b.onclick=()=>swSetPct(Number(b.getAttribute('data-p'))));
+  host.querySelectorAll('.sw-slip').forEach(b=>b.onclick=()=>swSetSlip(Number(b.getAttribute('data-s')), b));
+  const sc=document.getElementById('swSlipCustom');
+  if(sc) sc.addEventListener('input', ()=>{ const v=parseFloat(sc.value); if(v>0&&v<=50){ swSetSlip(v, null); } });
+  _swapState.slippage = 2.5;
   swSetSide('buy');
   loadSwapBalances();
 }
@@ -1267,6 +1287,20 @@ function swShowBalance(){
     const tb = _swapState.tokBal!=null ? fromWei(_swapState.tokBal,_swapState.dec,6) : '\u2014';
     el.innerHTML = 'Balance: <b>'+tb+' $'+esc(_swapState.sym)+'</b>';
   }
+}
+
+// set the max slippage tolerance (%), re-quote if an amount is entered
+function swSetSlip(pct, btn){
+  _swapState.slippage = pct;
+  document.querySelectorAll('.sw-slip').forEach(b=>b.classList.toggle('on', b===btn));
+  if(!btn){ // custom input in use — clear preset highlights
+    document.querySelectorAll('.sw-slip').forEach(b=>b.classList.remove('on'));
+  } else {
+    const sc=document.getElementById('swSlipCustom'); if(sc) sc.value='';
+  }
+  _swapState.quote=null;
+  const amt=(document.getElementById('swAmt').value||'').trim();
+  if(amt && Number(amt)>0) swGetQuote();
 }
 
 // set the amount input to a percentage of the available balance
@@ -1343,7 +1377,8 @@ async function swGetQuote(){
   _swapState.amountWei = amountWei;
   document.getElementById('swQuote').innerHTML='<div class="sw-quoting">getting best price\u2026</div>';
   swResetBtn();
-  const { ok, data } = await swPost('quote', { type:'EXACT_INPUT', tokenIn, tokenOut, amount:amountWei });
+  const slip = _swapState.slippage!=null ? _swapState.slippage : 2.5;
+  const { ok, data } = await swPost('quote', { type:'EXACT_INPUT', tokenIn, tokenOut, amount:amountWei, slippageTolerance:slip });
   if(!ok || !data || !data.quote){
     const msg=(data&&(data.detail||data.errorCode||data.message))||'No route found for this pair/amount.';
     document.getElementById('swQuote').innerHTML='<div class="sw-quoteerr">'+esc(String(msg))+'</div>';
@@ -1376,12 +1411,18 @@ function toHexQty(v){
   if(s.startsWith('0x')||s.startsWith('0X')) return s;   // already hex
   try{ return '0x'+BigInt(s).toString(16); }catch(e){ return undefined; }
 }
-// build a clean eth_sendTransaction param from an API tx object
-function normalizeTx(tx, from){
+// build a clean eth_sendTransaction param from an API tx object.
+// isNativeIn: true only when spending native ETH (a buy). On a sell you send
+// TOKENS, so the tx must carry NO ETH value — otherwise the wallet thinks
+// you're trying to send that much ETH and rejects for "insufficient funds".
+function normalizeTx(tx, from, isNativeIn){
   const p={ from, to:tx.to, data:tx.data||tx.calldata||'0x' };
-  const val=toHexQty(tx.value); if(val!==undefined) p.value=val; else p.value='0x0';
+  if(isNativeIn){
+    const val=toHexQty(tx.value); p.value = (val!==undefined) ? val : '0x0';
+  } else {
+    p.value='0x0';   // ERC20 in (sell/approval) — never attach ETH value
+  }
   const gl=toHexQty(tx.gasLimit||tx.gas); if(gl!==undefined) p.gas=gl;
-  // let the wallet estimate gas price unless the API gave explicit 1559 fields
   const mf=toHexQty(tx.maxFeePerGas); if(mf!==undefined) p.maxFeePerGas=mf;
   const mp=toHexQty(tx.maxPriorityFeePerGas); if(mp!==undefined) p.maxPriorityFeePerGas=mp;
   return p;
@@ -1409,7 +1450,7 @@ async function swExecute(){
         swStatus('Approve the token first \u2014 confirm in your wallet.','');
         btn.innerHTML='<span class="spin"></span> Confirm approval\u2026';
         const a=ca.data.approval;
-        const apHash=await window.ethereum.request({ method:'eth_sendTransaction', params:[ normalizeTx(a, wallet) ] });
+        const apHash=await window.ethereum.request({ method:'eth_sendTransaction', params:[ normalizeTx(a, wallet, false) ] });
         swStatus('Approval sent, waiting\u2026','');
         await swWaitReceipt(apHash);
       }
@@ -1438,7 +1479,7 @@ async function swExecute(){
     btn.innerHTML='<span class="spin"></span> Confirm swap\u2026';
     const t=sw.data.swap;
     const txHash=await window.ethereum.request({ method:'eth_sendTransaction',
-      params:[ normalizeTx(t, wallet) ] });
+      params:[ normalizeTx(t, wallet, _swapState.side==='buy') ] });
     swStatus('Swap submitted \u2014 waiting for confirmation\u2026','');
     const rc=await swWaitReceipt(txHash);
     if(rc && (rc.status==='0x1'||rc.status===1)){
