@@ -369,6 +369,16 @@ body.exploring .wrap{padding-bottom:64px}
 .sw-slip.on{background:var(--green);color:#000;border-color:var(--green)}
 .sw-slip-in{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--fg);font-family:var(--mono);font-size:12px}
 .sw-slip-in:focus{outline:none;border-color:var(--green-dim)}
+
+.sw-token{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-2);border-radius:9px;margin:10px 0 12px}
+.sw-t-sym{font-weight:800;font-size:14px;color:var(--green)}
+.sw-t-addr{font-family:var(--mono);font-size:11px;color:var(--fg-faint)}
+.sw-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sw-go{border:none;border-radius:11px;padding:14px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:7px}
+.sw-buy{background:var(--green);color:#000}
+.sw-sell{background:var(--surface-2);color:var(--fg);border:1px solid var(--line)}
+.sw-buy:hover{filter:brightness(1.07)} .sw-sell:hover{border-color:var(--fg-dim)}
+.sw-go::after{content:"97";font-size:12px;opacity:.7}
 </style>
 </head>
 <body>
@@ -1201,130 +1211,45 @@ function swAuthHeaders(){
   return t ? { authorization:'Bearer '+t, 'content-type':'application/json' } : { 'content-type':'application/json' };
 }
 
-async function swPost(action, payload){
-  const r = await fetch(SWAP_API, { method:'POST', headers:swAuthHeaders(), body:JSON.stringify({ action, ...payload }) });
-  const j = await r.json().catch(()=>null);
-  return { ok:r.ok, status:r.status, data:j };
-}
-
 function renderSwapPanel(mkt, addr, sym){
-  _swapState = { token:addr, sym:sym||'token', dec:(mkt&&mkt.dec)||18, side:'buy', quote:null, quoteAt:0, amountWei:null };
+  _swapState = { token:addr, sym:sym||'token', dexUrl:(mkt&&mkt.dexUrl)||null };
   const host = document.getElementById('tokSwap');
   if(!host) return;
   host.innerHTML =
     '<div class="sw-head">Swap</div>'
     +'<div class="sw-row"><input id="swCa" class="sw-ca" value="'+esc(addr)+'" spellcheck="false" autocomplete="off">'
     +'<button id="swLoad" class="sw-load">Load</button></div>'
-    +'<div class="sw-side"><button class="sw-tab on" id="swBuyTab">Buy</button><button class="sw-tab" id="swSellTab">Sell</button></div>'
-    +'<div class="sw-bal" id="swBal"></div>'
-    +'<div class="sw-inrow"><input id="swAmt" class="sw-amt" inputmode="decimal" placeholder="0.0" autocomplete="off">'
-    +'<span class="sw-cur" id="swCur">ETH</span></div>'
-    +'<div class="sw-pcts"><button class="sw-pct" data-p="10">10%</button><button class="sw-pct" data-p="25">25%</button><button class="sw-pct" data-p="50">50%</button><button class="sw-pct" data-p="100">MAX</button></div>'
-    +'<div class="sw-sliprow"><span class="sw-slip-l">Max slippage</span>'
-    +'<div class="sw-slips">'
-    +'<button class="sw-slip" data-s="0.5">0.5%</button>'
-    +'<button class="sw-slip on" data-s="2.5">2.5%</button>'
-    +'<button class="sw-slip" data-s="5">5%</button>'
-    +'<input id="swSlipCustom" class="sw-slip-in" inputmode="decimal" placeholder="custom" autocomplete="off">'
-    +'</div></div>'
-    +'<div class="sw-quote" id="swQuote"></div>'
-    +'<button class="sw-go sw-buy" id="swExec" disabled>Enter an amount</button>'
+    +'<div class="sw-token" id="swToken">'+swTokenLine(_swapState)+'</div>'
+    +'<div class="sw-actions">'
+    +'<button class="sw-go sw-buy" id="swBuy">Buy $'+esc(_swapState.sym)+'</button>'
+    +'<button class="sw-go sw-sell" id="swSell">Sell $'+esc(_swapState.sym)+'</button>'
+    +'</div>'
     +'<div class="sw-status" id="swStatus"></div>'
-    +'<div class="sw-note">Swaps route through Uniswap on Robinhood Chain. Each step (approval, then swap) is a transaction you sign in your own wallet. Not financial advice.</div>';
+    +'<div class="sw-note">Opens Uniswap on Robinhood Chain with this token pre-loaded, so the swap happens in Uniswap\u2019s own interface \u2014 works with every wallet type. The trade stays fully in your control. Not financial advice.</div>';
 
   document.getElementById('swLoad').onclick = swLoadCa;
   document.getElementById('swCa').addEventListener('keydown', e=>{ if(e.key==='Enter') swLoadCa(); });
-  document.getElementById('swBuyTab').onclick = ()=>swSetSide('buy');
-  document.getElementById('swSellTab').onclick = ()=>swSetSide('sell');
-  document.getElementById('swAmt').addEventListener('input', swOnAmount);
-  document.getElementById('swExec').onclick = swExecute;
-  host.querySelectorAll('.sw-pct').forEach(b=>b.onclick=()=>swSetPct(Number(b.getAttribute('data-p'))));
-  host.querySelectorAll('.sw-slip').forEach(b=>b.onclick=()=>swSetSlip(Number(b.getAttribute('data-s')), b));
-  const sc=document.getElementById('swSlipCustom');
-  if(sc) sc.addEventListener('input', ()=>{ const v=parseFloat(sc.value); if(v>0&&v<=50){ swSetSlip(v, null); } });
-  _swapState.slippage = 2.5;
-  swSetSide('buy');
-  loadSwapBalances();
+  document.getElementById('swBuy').onclick = ()=>swOpenUniswap('buy');
+  document.getElementById('swSell').onclick = ()=>swOpenUniswap('sell');
 }
 
-function swSetSide(side){
-  _swapState.side = side; _swapState.quote=null;
-  document.getElementById('swBuyTab').classList.toggle('on', side==='buy');
-  document.getElementById('swSellTab').classList.toggle('on', side==='sell');
-  // buy = spend ETH to get token; sell = spend token to get ETH
-  document.getElementById('swCur').textContent = side==='buy' ? 'ETH' : ('$'+_swapState.sym);
-  document.getElementById('swQuote').innerHTML='';
-  swResetBtn();
-  swShowBalance();
-  swOnAmount();
+function swTokenLine(t){
+  return '<span class="sw-t-sym">$'+esc(t.sym)+'</span><span class="sw-t-addr">'+esc(t.token.slice(0,10)+'\u2026'+t.token.slice(-6))+'</span>';
 }
 
-// load the connected wallet's ETH balance + this token's balance (for sell)
-async function loadSwapBalances(){
-  if(!window.ethereum) return;
-  try{
-    const acc = await window.ethereum.request({ method:'eth_accounts' });
-    const w = acc && acc[0]; if(!w) return;
-    _swapState.wallet = w;
-    // Detect a smart-account wallet (7702/EIP-1271): it has deployed code.
-    // Such wallets can't make a standard Permit2 ECDSA signature, so we route
-    // their swaps through the legacy (direct-allowance) path instead.
-    try{
-      const code = await window.ethereum.request({ method:'eth_getCode', params:[w,'latest'] });
-      _swapState.isSmartAccount = !!(code && code!=='0x' && code.length>2);
-      if(_swapState.isSmartAccount) console.log('[swap] smart-account wallet detected — using legacy approval path');
-    }catch(e){ _swapState.isSmartAccount=false; }
-    // ETH balance
-    const ethHex = await window.ethereum.request({ method:'eth_getBalance', params:[w,'latest'] });
-    _swapState.ethBal = BigInt(ethHex||'0x0');
-    // token balance via balanceOf
-    const data = '0x70a08231' + w.toLowerCase().replace('0x','').padStart(64,'0');
-    const tokHex = await window.ethereum.request({ method:'eth_call', params:[{ to:_swapState.token, data }, 'latest'] });
-    _swapState.tokBal = (tokHex && tokHex!=='0x') ? BigInt(tokHex) : 0n;
-  }catch(e){}
-  swShowBalance();
-}
-
-function swShowBalance(){
-  const el=document.getElementById('swBal'); if(!el) return;
-  const side=_swapState.side;
-  if(side==='buy'){
-    const eth = _swapState.ethBal!=null ? fromWei(_swapState.ethBal,18,6) : '\u2014';
-    el.innerHTML = 'Balance: <b>'+eth+' ETH</b>';
-  } else {
-    const tb = _swapState.tokBal!=null ? fromWei(_swapState.tokBal,_swapState.dec,6) : '\u2014';
-    el.innerHTML = 'Balance: <b>'+tb+' $'+esc(_swapState.sym)+'</b>';
-  }
-}
-
-// set the max slippage tolerance (%), re-quote if an amount is entered
-function swSetSlip(pct, btn){
-  _swapState.slippage = pct;
-  document.querySelectorAll('.sw-slip').forEach(b=>b.classList.toggle('on', b===btn));
-  if(!btn){ // custom input in use — clear preset highlights
-    document.querySelectorAll('.sw-slip').forEach(b=>b.classList.remove('on'));
-  } else {
-    const sc=document.getElementById('swSlipCustom'); if(sc) sc.value='';
-  }
-  _swapState.quote=null;
-  const amt=(document.getElementById('swAmt').value||'').trim();
-  if(amt && Number(amt)>0) swGetQuote();
-}
-
-// set the amount input to a percentage of the available balance
-function swSetPct(pct){
-  const side=_swapState.side;
-  const bal = side==='buy' ? _swapState.ethBal : _swapState.tokBal;
-  const dec = side==='buy' ? 18 : _swapState.dec;
-  if(bal==null){ swStatus('Connect your wallet to use % buttons.',''); return; }
-  let amtWei = bal * BigInt(pct) / 100n;
-  // for a MAX ETH buy, leave a little for gas so the tx doesn't fail
-  if(side==='buy' && pct===100){
-    const gasReserve = 300000000000000n; // ~0.0003 ETH headroom for gas
-    amtWei = amtWei > gasReserve ? amtWei - gasReserve : 0n;
-  }
-  document.getElementById('swAmt').value = fromWeiPlain(amtWei, dec, 8);
-  swOnAmount();
+// Uniswap app deep-link. Buy = ETH -> token (token as output); Sell = token -> ETH.
+// chain=4663 (Robinhood). Uses the native ETH sentinel for the ETH side.
+function swOpenUniswap(side){
+  const t = _swapState.token;
+  const NATIVE = 'NATIVE';
+  const inCur  = side==='buy' ? NATIVE : t;
+  const outCur = side==='buy' ? t : NATIVE;
+  const url = 'https://app.uniswap.org/swap'
+    + '?chain=4663'
+    + '&inputCurrency=' + encodeURIComponent(inCur)
+    + '&outputCurrency=' + encodeURIComponent(outCur);
+  window.open(url, '_blank', 'noopener');
+  swStatus('Opening Uniswap in a new tab\u2026','');
 }
 
 async function swLoadCa(){
@@ -1332,221 +1257,15 @@ async function swLoadCa(){
   if(!/^0x[0-9a-f]{40}$/.test(v)){ swStatus('That doesn\u2019t look like a token address.','err'); return; }
   swStatus('Loading token\u2026','');
   const tok = await proxySoft('/api/v2/tokens/'+v);
-  _swapState.token=v; _swapState.sym=(tok&&tok.symbol)||'token'; _swapState.dec=Number((tok&&tok.decimals)||18);
-  _swapState.quote=null;
-  document.getElementById('swSellTab').textContent='Sell';
-  swSetSide(_swapState.side);
-  loadSwapBalances();
+  _swapState.token=v; _swapState.sym=(tok&&tok.symbol)||'token';
+  document.getElementById('swToken').innerHTML = swTokenLine(_swapState);
+  document.getElementById('swBuy').textContent = 'Buy $'+_swapState.sym;
+  document.getElementById('swSell').textContent = 'Sell $'+_swapState.sym;
   swStatus(tok?'':'Token not found on-chain, but you can still try.','');
 }
 
-let _swDebounce=null;
-function swOnAmount(){
-  _swapState.quote=null; swResetBtn();
-  const raw=(document.getElementById('swAmt').value||'').trim();
-  if(!raw || isNaN(Number(raw)) || Number(raw)<=0){ document.getElementById('swQuote').innerHTML=''; return; }
-  clearTimeout(_swDebounce);
-  _swDebounce=setTimeout(swGetQuote, 450);
-}
-
-function toWei(amountStr, dec){
-  // decimal string -> integer wei string, no float error
-  const [w,f=''] = String(amountStr).split('.');
-  const frac=(f+'0'.repeat(dec)).slice(0,dec);
-  return (BigInt(w||'0')*(10n**BigInt(dec)) + BigInt(frac||'0')).toString();
-}
-function fromWei(wei, dec, prec){
-  try{ const v=BigInt(String(wei)); const base=10n**BigInt(dec);
-    const whole=v/base, frac=(v%base).toString().padStart(dec,'0').replace(/0+$/,'');
-    // limit fractional digits to `prec` (default 6) without scientific notation
-    const maxFrac = prec || 6;
-    const fracTrim = frac.slice(0, maxFrac);
-    const wholeStr = whole.toLocaleString('en-US');
-    return fracTrim ? (wholeStr+'.'+fracTrim) : wholeStr;
-  }catch(e){ return '0'; }
-}
-// plain decimal string (NO commas) — safe to feed back into the amount input
-function fromWeiPlain(wei, dec, prec){
-  try{ const v=BigInt(String(wei)); const base=10n**BigInt(dec);
-    const whole=v/base, frac=(v%base).toString().padStart(dec,'0').replace(/0+$/,'');
-    const fracTrim = frac.slice(0, prec||8);
-    return fracTrim ? (whole.toString()+'.'+fracTrim) : whole.toString();
-  }catch(e){ return '0'; }
-}
-
-async function swGetQuote(){
-  const raw=(document.getElementById('swAmt').value||'').trim();
-  if(!raw||Number(raw)<=0) return;
-  const side=_swapState.side;
-  const tokenIn  = side==='buy' ? NATIVE : _swapState.token;
-  const tokenOut = side==='buy' ? _swapState.token : NATIVE;
-  const inDec    = side==='buy' ? 18 : _swapState.dec;
-  const amountWei= toWei(raw, inDec);
-  _swapState.amountWei = amountWei;
-  document.getElementById('swQuote').innerHTML='<div class="sw-quoting">getting best price\u2026</div>';
-  swResetBtn();
-  const slip = _swapState.slippage!=null ? _swapState.slippage : 2.5;
-  const quoteReq = { type:'EXACT_INPUT', tokenIn, tokenOut, amount:amountWei, slippageTolerance:slip };
-  // smart accounts -> legacy (non-Permit2) route
-  if(_swapState.isSmartAccount) quoteReq.smartContractWallet = true;
-  const { ok, data } = await swPost('quote', quoteReq);
-  if(!ok || !data || !data.quote){
-    const msg=(data&&(data.detail||data.errorCode||data.message))||'No route found for this pair/amount.';
-    document.getElementById('swQuote').innerHTML='<div class="sw-quoteerr">'+esc(String(msg))+'</div>';
-    return;
-  }
-  _swapState.quote=data; _swapState.quoteAt=Date.now();
-  const q=data.quote;
-  const outDec = side==='buy' ? _swapState.dec : 18;
-  const outSym = side==='buy' ? ('$'+_swapState.sym) : 'ETH';
-  const outAmt = q.output&&q.output.amount;
-  const minAmt = q.output&&q.output.minimumAmount;
-  const pi = q.priceImpact!=null?Number(q.priceImpact):null;
-  document.getElementById('swQuote').innerHTML =
-    '<div class="sw-qline"><span>Expected</span><b>'+fromWei(outAmt,outDec,6)+' '+outSym+'</b></div>'
-    +'<div class="sw-qline"><span>Minimum received</span><span>'+fromWei(minAmt,outDec,6)+' '+outSym+'</span></div>'
-    +(pi!=null?'<div class="sw-qline"><span>Price impact</span><span class="'+(pi>=5?'sw-pi-hi':'')+'">'+pi.toFixed(2)+'%</span></div>':'')
-    +(q.slippage!=null?'<div class="sw-qline"><span>Max slippage</span><span>'+q.slippage+'%</span></div>':'');
-  const btn=document.getElementById('swExec');
-  btn.disabled=false; btn.textContent=(side==='buy'?'Buy ':'Sell ')+'$'+_swapState.sym;
-}
-
-function swResetBtn(){ const b=document.getElementById('swExec'); if(b){ b.disabled=true; b.textContent='Enter an amount'; } }
-
-// normalize a numeric field to a 0x-hex quantity for eth_sendTransaction.
-// The Trading API returns value/gas as DECIMAL strings; MetaMask needs hex.
-function toHexQty(v){
-  if(v==null) return undefined;
-  const s=String(v).trim();
-  if(s==='') return undefined;
-  if(s.startsWith('0x')||s.startsWith('0X')) return s;   // already hex
-  try{ return '0x'+BigInt(s).toString(16); }catch(e){ return undefined; }
-}
-// build a clean eth_sendTransaction param from an API tx object.
-// isNativeIn: true only when spending native ETH (a buy). On a sell you send
-// TOKENS, so the tx must carry NO ETH value — otherwise the wallet thinks
-// you're trying to send that much ETH and rejects for "insufficient funds".
-function normalizeTx(tx, from, isNativeIn){
-  const p={ from, to:tx.to, data:tx.data||tx.calldata||'0x' };
-  if(isNativeIn){
-    const val=toHexQty(tx.value); p.value = (val!==undefined) ? val : '0x0';
-  } else {
-    p.value='0x0';   // ERC20 in (sell/approval) — never attach ETH value
-  }
-  const gl=toHexQty(tx.gasLimit||tx.gas); if(gl!==undefined) p.gas=gl;
-  const mf=toHexQty(tx.maxFeePerGas); if(mf!==undefined) p.maxFeePerGas=mf;
-  const mp=toHexQty(tx.maxPriorityFeePerGas); if(mp!==undefined) p.maxPriorityFeePerGas=mp;
-  return p;
-}
-
-async function swExecute(){
-  if(!window.ethereum){ swStatus('No wallet found.','err'); return; }
-  if(!_swapState.quote){ swStatus('Get a quote first.','err'); return; }
-  // re-quote if the quote is stale (>25s)
-  if(Date.now()-_swapState.quoteAt > 25000){ swStatus('Refreshing price\u2026',''); await swGetQuote(); if(!_swapState.quote) return; }
-
-  const btn=document.getElementById('swExec'); btn.disabled=true;
-  let wallet;
-  try{ const acc=await window.ethereum.request({method:'eth_requestAccounts'}); wallet=acc&&acc[0]; }
-  catch(e){ swStatus('Connect your wallet to swap.','err'); btn.disabled=false; return; }
-
-  try{
-    const side=_swapState.side;
-    const tokenIn = side==='buy' ? NATIVE : _swapState.token;
-    // 1. approval only needed when selling a token (ERC20 in). Native ETH needs none.
-    if(side==='sell'){
-      btn.innerHTML='<span class="spin"></span> Checking approval\u2026';
-      const ca = await swPost('check_approval', { token:tokenIn, amount:_swapState.amountWei, walletAddress:wallet });
-      console.log('[swap] check_approval status:', ca.status, 'approval present:', !!(ca.data && ca.data.approval));
-      if(ca.data && ca.data.approval) console.log('[swap] approval.to (spender contract):', ca.data.approval.to);
-      if(ca.ok && ca.data && ca.data.approval){
-        swStatus('Approve the token first \u2014 confirm in your wallet.','');
-        btn.innerHTML='<span class="spin"></span> Confirm approval\u2026';
-        const a=ca.data.approval;
-        const apHash=await window.ethereum.request({ method:'eth_sendTransaction', params:[ normalizeTx(a, wallet, false) ] });
-        swStatus('Approval confirming on-chain\u2026','');
-        const aprc = await swWaitReceipt(apHash);
-        if(!aprc || !(aprc.status==='0x1'||aprc.status===1)){
-          swStatus('Token approval failed. Cannot sell without it.','err'); btn.disabled=false; btn.textContent='Try again'; return;
-        }
-        // approval just mined — the permit/quote may be stale now. Re-quote so the
-        // /swap call is built against the fresh, now-approved state.
-        swStatus('Approved. Refreshing quote\u2026','');
-        await swGetQuote();
-        if(!_swapState.quote){ swStatus('Could not refresh quote after approval.','err'); btn.disabled=false; btn.textContent='Try again'; return; }
-      }
-    }
-
-    // 2. build the swap tx via /swap.
-    // GOTCHA (from the Trading API docs): do NOT nest as { quote: {...} }.
-    // Spread the quote RESPONSE fields into the body, or the API rejects with
-    // "quote does not match any of the allowed types". Then add signature +
-    // permitData for CLASSIC routes. Never send permitData: null.
-    btn.innerHTML='<span class="spin"></span> Preparing swap\u2026';
-    const routing = _swapState.quote.routing || 'CLASSIC';
-    const swapReq = { quote: _swapState.quote.quote };  // API's /swap wants the quote object under `quote`
-    const permit = _swapState.quote.permitData;
-    if(permit){
-      try{
-        console.log('[swap] routing:', routing);
-        console.log('[swap] permit.domain:', JSON.stringify(permit.domain));
-        console.log('[swap] permit.values.spender:', permit.values && permit.values.spender);
-      }catch(e){}
-      swStatus('Sign the swap permission (no gas) \u2014 in your wallet.','');
-      // sign exactly what the API returned — do not mutate the domain
-      const sig = await window.ethereum.request({ method:'eth_signTypedData_v4',
-        params:[wallet, JSON.stringify({ domain:permit.domain, types:permit.types, message:permit.values, primaryType:'PermitSingle' })] });
-      swapReq.signature = sig;
-      // CLASSIC sends BOTH signature + permitData. Only include permitData when
-      // the API actually returned it (never permitData: null).
-      swapReq.permitData = permit;
-    }
-    console.log('[swap] /swap request keys:', Object.keys(swapReq), 'routing:', routing, 'has sig:', !!swapReq.signature);
-    const sw = await swPost('swap', swapReq);
-    console.log('[swap] /swap response status:', sw.status, 'keys:', sw.data && Object.keys(sw.data));
-    if(!sw.ok || !sw.data || !sw.data.swap || !sw.data.swap.data){
-      const d=sw.data||{};
-      const m=d.detail||d.errorCode||d.message||('Swap could not be built (HTTP '+sw.status+'). The quote may have expired \u2014 try again.');
-      swStatus(String(m),'err');
-      console.warn('[swap] /swap failed:', sw.status, d);
-      btn.disabled=false; btn.textContent='Try again'; return;
-    }
-
-    // 3. send the swap tx
-    swStatus('Confirm the swap in your wallet.','');
-    btn.innerHTML='<span class="spin"></span> Confirm swap\u2026';
-    const t=sw.data.swap;
-    const txHash=await window.ethereum.request({ method:'eth_sendTransaction',
-      params:[ normalizeTx(t, wallet, _swapState.side==='buy') ] });
-    swStatus('Swap submitted \u2014 waiting for confirmation\u2026','');
-    const rc=await swWaitReceipt(txHash);
-    if(rc && (rc.status==='0x1'||rc.status===1)){
-      swStatus('Swapped. Check your wallet balance.','ok');
-      const link=document.createElement('a'); link.href='https://robinhoodchain.blockscout.com/tx/'+txHash;
-      link.target='_blank'; link.rel='noopener'; link.className='sw-txlink'; link.textContent='View transaction \u2197';
-      document.getElementById('swStatus').appendChild(document.createElement('br')); document.getElementById('swStatus').appendChild(link);
-    } else {
-      swStatus('Swap transaction failed on-chain.','err');
-    }
-    btn.textContent=(side==='buy'?'Buy ':'Sell ')+'$'+_swapState.sym; btn.disabled=false;
-    _swapState.quote=null;
-  }catch(e){
-    const m=(e&&e.message)||String(e);
-    if(/reject|denied/i.test(m)) swStatus('Cancelled. Nothing was sent.','');
-    else swStatus(m,'err');
-    btn.disabled=false; btn.textContent=(_swapState.side==='buy'?'Buy ':'Sell ')+'$'+_swapState.sym;
-  }
-}
-
-async function swWaitReceipt(hash){
-  for(let i=0;i<40;i++){
-    await new Promise(r=>setTimeout(r,1500));
-    try{ const rc=await window.ethereum.request({method:'eth_getTransactionReceipt',params:[hash]}); if(rc) return rc; }catch(e){}
-  }
-  return null;
-}
-
 function swStatus(msg,cls){ const s=document.getElementById('swStatus'); if(s){ s.innerHTML=esc(msg||''); s.className='sw-status'+(cls?' '+cls:''); } }
+
 
 // ---- TOKEN view (memecoin scan: name/ticker/logo/holders + quick flags) ----
 async function showToken(addr){
