@@ -323,6 +323,26 @@ body.exploring .wrap{padding-bottom:64px}
 .ci-empty{font-size:12px;color:var(--fg-faint);padding:6px}
 .ci-link{display:inline-block;margin-top:14px;font-size:12.5px;color:var(--green);text-decoration:none;font-weight:600}
 .ci-link:hover{text-decoration:underline}
+
+.tok-swap{margin-top:18px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px}
+.sw-head{font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-faint);margin-bottom:12px}
+.sw-row{display:flex;gap:8px;margin-bottom:10px}
+.sw-ca{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:11px 12px;
+  color:var(--fg);font-family:var(--mono);font-size:12px}
+.sw-ca:focus{outline:none;border-color:var(--green-dim)}
+.sw-load{background:var(--surface-2);border:1px solid var(--line);color:var(--fg-dim);border-radius:9px;padding:0 16px;
+  font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}
+.sw-load:hover{border-color:var(--green-dim);color:var(--fg)}
+.sw-token{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-2);border-radius:9px;margin-bottom:12px}
+.sw-t-sym{font-weight:800;font-size:14px;color:var(--green)}
+.sw-t-addr{font-family:var(--mono);font-size:11px;color:var(--fg-faint)}
+.sw-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sw-go{border:none;border-radius:11px;padding:14px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit}
+.sw-buy{background:var(--green);color:#000}
+.sw-sell{background:var(--surface-2);color:var(--fg);border:1px solid var(--line)}
+.sw-buy:hover{filter:brightness(1.07)} .sw-sell:hover{border-color:var(--fg-dim)}
+.sw-note{font-size:11.5px;color:var(--fg-faint);margin-top:12px;line-height:1.5}
+.sw-status{font-size:12px;color:var(--fg-dim);font-family:var(--mono);margin-top:8px;min-height:14px}
 </style>
 </head>
 <body>
@@ -1142,6 +1162,71 @@ async function loadContractInfo(addr){
     + '<a class="ci-link" href="https://robinhoodchain.blockscout.com/address/'+esc(addr)+'?tab=contract" target="_blank" rel="noopener">View full source on Blockscout \u2197</a>';
 }
 
+// ---- swap panel (deep-link to the DEX; native v4 swap comes later) ----
+// Defaults to the token being viewed; any CA can be pasted to switch.
+let _swapToken = null;   // { addr, sym, dexUrl }
+
+function renderSwapPanel(mkt, addr, sym){
+  _swapToken = { addr, sym: sym||'token', dexUrl: (mkt&&mkt.dexUrl)||null };
+  const host = document.getElementById('tokSwap');
+  if(!host) return;
+  host.innerHTML =
+    '<div class="sw-head">Swap</div>'
+    +'<div class="sw-row">'
+    +'<input id="swCa" class="sw-ca" value="'+esc(addr)+'" spellcheck="false" autocomplete="off">'
+    +'<button id="swLoad" class="sw-load">Load</button>'
+    +'</div>'
+    +'<div class="sw-token" id="swToken">'+swTokenLine(_swapToken)+'</div>'
+    +'<div class="sw-actions">'
+    +'<button class="sw-go sw-buy" id="swBuy">Buy '+esc(_swapToken.sym)+'</button>'
+    +'<button class="sw-go sw-sell" id="swSell">Sell '+esc(_swapToken.sym)+'</button>'
+    +'</div>'
+    +'<div class="sw-note">Opens the live pool on '+(_swapToken.dexUrl?'the DEX':'a DEX')+' to complete the swap in your wallet. '
+    +'A native in-app swap is coming \u2014 for now this routes you to the pool so the trade stays fully in your control.</div>';
+
+  document.getElementById('swLoad').onclick = swLoadCa;
+  document.getElementById('swCa').addEventListener('keydown', e=>{ if(e.key==='Enter') swLoadCa(); });
+  document.getElementById('swBuy').onclick = ()=>swGo('buy');
+  document.getElementById('swSell').onclick = ()=>swGo('sell');
+}
+
+function swTokenLine(t){
+  return '<span class="sw-t-sym">$'+esc(t.sym)+'</span><span class="sw-t-addr">'+esc(t.addr.slice(0,10)+'\u2026'+t.addr.slice(-6))+'</span>';
+}
+
+async function swLoadCa(){
+  const v = (document.getElementById('swCa').value||'').trim().toLowerCase();
+  if(!/^0x[0-9a-f]{40}$/.test(v)){ swStatus('That doesn\u2019t look like a token address.'); return; }
+  swStatus('Loading token\u2026');
+  // pull the pair for this CA so Buy/Sell route to the right pool
+  try{
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/'+v,{headers:{accept:'application/json'}});
+    const j = await r.json();
+    const pairs = (j.pairs||[]).filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()));
+    const use = pairs.sort((a,b)=>((b.liquidity&&b.liquidity.usd)||0)-((a.liquidity&&a.liquidity.usd)||0))[0];
+    const sym = (use&&use.baseToken&&use.baseToken.symbol) || 'token';
+    _swapToken = { addr:v, sym, dexUrl:(use&&use.url)||null };
+    document.getElementById('swToken').innerHTML = swTokenLine(_swapToken);
+    document.getElementById('swBuy').textContent = 'Buy '+sym;
+    document.getElementById('swSell').textContent = 'Sell '+sym;
+    swStatus(use ? '' : 'No DEX pool found for this token yet.');
+  }catch(e){ swStatus('Couldn\u2019t load that token.'); }
+}
+
+function swGo(side){
+  if(!_swapToken){ return; }
+  // prefer the exact pair URL from DexScreener; fall back to a token search there
+  const url = _swapToken.dexUrl
+    || ('https://dexscreener.com/robinhood/'+_swapToken.addr);
+  window.open(url, '_blank', 'noopener');
+}
+
+function swStatus(msg){
+  let s = document.getElementById('swStatus');
+  if(!s){ s=document.createElement('div'); s.id='swStatus'; s.className='sw-status'; document.getElementById('tokSwap').appendChild(s); }
+  s.textContent = msg||'';
+}
+
 // ---- TOKEN view (memecoin scan: name/ticker/logo/holders + quick flags) ----
 async function showToken(addr){
   if(landingTimer){clearInterval(landingTimer);landingTimer=null;}
@@ -1170,7 +1255,8 @@ async function showToken(addr){
     const use = pairs.sort((a,b)=>((b.liquidity&&b.liquidity.usd)||0)-((a.liquidity&&a.liquidity.usd)||0))[0];
     if(use) mkt = { price:parseFloat(use.priceUsd)||0, mcap:use.marketCap||use.fdv||0,
       vol:(use.volume&&use.volume.h24)||0, liq:(use.liquidity&&use.liquidity.usd)||0,
-      ch:use.priceChange||{}, logo:(use.info&&use.info.imageUrl)||null };
+      ch:use.priceChange||{}, logo:(use.info&&use.info.imageUrl)||null,
+      dexUrl:use.url||null, dexId:use.dexId||null, pairAddr:use.pairAddress||null };
   }
   const logoFinal = logo || (mkt&&mkt.logo);
 
@@ -1230,9 +1316,11 @@ async function showToken(addr){
     +'<div class="tok-bundlenote">Bubbles show holders by size. The large amber bubble is usually the LP. For the deep bundle + honeypot check, run the full scan:</div>'
     +'<div class="exp-tabs"><button class="exp-tab active">Contract</button></div>'
     +'<div id="tokContractInfo" class="tok-contract"><div class="exp-loading">loading contract info\u2026</div></div>'
+    +'<div id="tokSwap" class="tok-swap"></div>'
     +'<a class="tok-fullscan" href="https://www.robinscan4u.com/?token='+esc(addr)+'" target="_blank" rel="noopener">Run full honeypot + sell-test scan on RobinScan \u2197</a>'
     +'</div>';
   loadContractInfo(addr);
+  renderSwapPanel(mkt, addr, sym);
 }
 
 function tokStat(label,val){ return '<div class="tok-stat"><span class="ts-l">'+label+'</span><span class="ts-v">'+val+'</span></div>'; }
