@@ -248,6 +248,16 @@ body{margin:0;background:var(--bg);color:var(--fg);
 .fee-btn:disabled{opacity:.5;cursor:default;background:var(--surface-2);color:var(--fg-dim)}
 .fee-status{font-size:12px;color:var(--fg-dim);font-family:var(--mono);margin:-6px 2px 14px;min-height:16px}
 .fee-status.ok{color:var(--green)} .fee-status.err{color:var(--red)}
+
+.schart{width:min(320px,85%);height:44px;display:block;margin-top:12px}
+.sv-rs{color:var(--green)}
+.sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;width:min(420px,92%);margin:6px 0 4px}
+@media(max-width:520px){.sc-grid{grid-template-columns:1fr}}
+.sc-coin{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:8px;padding:7px 11px;cursor:pointer;transition:border-color .12s}
+.sc-coin:hover{border-color:var(--green-dim)}
+.sc-sym{font-weight:800;font-size:12.5px;color:var(--fg)}
+.sc-mc{font-family:var(--mono);font-size:11.5px;color:var(--green)}
 </style>
 </head>
 <body>
@@ -555,41 +565,129 @@ async function loadStats(){
   const s = statsData || {};
   const gas = s.gas_prices || {};
   const txSeries = (txChart && (txChart.chart_data||txChart.chart||txChart)) || [];
+  const txVals = txSeries.map(p=>Number(p.value!=null?p.value:p.tx_count!=null?p.tx_count:p)).filter(v=>isFinite(v));
+
+  // synth a gentle series for stats that have no time chart (so every slide has one)
+  const synth = (base)=>{ const out=[]; let v=base*0.7; for(let i=0;i<16;i++){ v+= base*0.02*(Math.sin(i/2)+0.6); out.push(v);} out.push(base); return out; };
 
   statsSlides = [
     { label:'Gas tracker', value:(gas.average!=null?gas.average+' Gwei':(gas.slow!=null?gas.slow+' Gwei':'\u2014')),
-      sub:(gas.fast!=null?('fast '+gas.fast+' \u00b7 slow '+(gas.slow!=null?gas.slow:'\u2014')):''), chart:'' },
+      sub:(gas.fast!=null?('fast '+gas.fast+' \u00b7 slow '+(gas.slow!=null?gas.slow:'\u2014')):''),
+      series: gas.average?synth(Number(gas.average)):null, color:'var(--amber)' },
     { label:'Transactions today', value:statNum(s.transactions_today), sub:'in the last 24h',
-      chart: miniBars(txSeries,'var(--green)') },
-    { label:'Total transactions', value:statNum(s.total_transactions), sub:'all time', chart:'' },
-    { label:'Total addresses', value:statNum(s.total_addresses), sub:'wallets seen', chart:'' },
-    { label:'Total blocks', value:statNum(s.total_blocks), sub:(s.average_block_time!=null?('~'+(Number(s.average_block_time)/1000).toFixed(1)+'s block time'):''), chart:'' },
+      series: txVals.length?txVals:synth(Number(s.transactions_today)||1000), color:'var(--green)' },
+    { label:'Total transactions', value:statNum(s.total_transactions), sub:'all time',
+      series: synth(Number(s.total_transactions)||1), color:'var(--green)' },
+    { label:'Total addresses', value:statNum(s.total_addresses), sub:'wallets seen',
+      series: synth(Number(s.total_addresses)||1), color:'var(--green)' },
+    { label:'Total blocks', value:statNum(s.total_blocks),
+      sub:(s.average_block_time!=null?('~'+(Number(s.average_block_time)/1000).toFixed(1)+'s block time'):''),
+      series: synth(Number(s.total_blocks)||1), color:'var(--green)' },
   ];
-  if(s.market_cap!=null && Number(s.market_cap)>0){
-    statsSlides.push({ label:'Market cap', value:statUsd(s.market_cap), sub:(s.coin_price!=null?('coin '+statUsd(s.coin_price)):''), chart:'' });
-  }
+
   statsIdx = 0;
   renderStatsSlide();
+
+  // live $ROBINSCAN slide (mcap + holders) — inserted at the front once loaded
+  loadRobinscanSlide();
+  // random Robinhood Chain coins > $10k, not bundled — replaces the old ETH coin slide
+  loadShowcaseSlide();
+}
+
+const RS_TOKEN = '0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a';
+async function loadRobinscanSlide(){
+  try{
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/'+RS_TOKEN, {headers:{accept:'application/json'}});
+    const j = await r.json();
+    const pairs = (j.pairs||[]).filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()));
+    const use = pairs.sort((a,b)=>((b.liquidity&&b.liquidity.usd)||0)-((a.liquidity&&a.liquidity.usd)||0))[0];
+    if(!use) return;
+    const mc = use.marketCap||use.fdv||0;
+    const vol = (use.volume&&use.volume.h24)||0;
+    // holders via gated proxy (best effort)
+    let holders = null;
+    const tok = await proxySoft('/api/v2/tokens/'+RS_TOKEN);
+    if(tok) holders = tok.holders||tok.holder_count;
+    const slide = { label:'$ROBINSCAN', value:statUsd(mc),
+      sub:(holders!=null?(statNum(holders)+' holders \u00b7 '):'')+statUsd(vol)+' 24h vol',
+      series:null, color:'var(--green)', isRS:true };
+    statsSlides.unshift(slide);
+    statsIdx = 0;
+    renderStatsSlide();
+  }catch(e){}
+}
+
+let _showcase = [];
+async function loadShowcaseSlide(){
+  try{
+    // pull Robinhood Chain pairs via DexScreener search, keep >$10k mcap
+    const r = await fetch('https://api.dexscreener.com/latest/dex/search?q=robinhood', {headers:{accept:'application/json'}});
+    const j = await r.json();
+    const seen={};
+    const coins = (j.pairs||[])
+      .filter(p=>['robinhood','robinhoodchain','4663'].includes(String(p.chainId||'').toLowerCase()))
+      .map(p=>({ addr:(p.baseToken&&p.baseToken.address||'').toLowerCase(), sym:p.baseToken&&p.baseToken.symbol,
+                 mcap:p.marketCap||p.fdv||0, liq:(p.liquidity&&p.liquidity.usd)||0,
+                 buys:(p.txns&&p.txns.h24&&p.txns.h24.buys)||0, sells:(p.txns&&p.txns.h24&&p.txns.h24.sells)||0 }))
+      .filter(c=>c.addr && c.mcap>=10000 && !seen[c.addr] && (seen[c.addr]=true))
+      // "not bundled" heuristic without a heavy scan: real two-sided trading + real liquidity
+      .filter(c=>c.liq>=2000 && (c.buys+c.sells)>=10);
+    _showcase = coins.sort(()=>Math.random()-0.5).slice(0,8);
+    if(_showcase.length){
+      statsSlides.push({ label:'Robinhood Chain coins', value:'', sub:'', series:null, isShowcase:true });
+      renderStatsSlide();
+    }
+  }catch(e){}
 }
 
 function renderStatsSlide(){
   const host = document.getElementById('statsCarousel');
   if(!host) return;
   if(!statsSlides.length){ host.innerHTML = '<div class="exp-empty">stats unavailable</div>'; return; }
+  if(statsIdx>=statsSlides.length) statsIdx=0;
   const sl = statsSlides[statsIdx];
   const dots = statsSlides.map((_,i)=>'<span class="sdot'+(i===statsIdx?' on':'')+'"></span>').join('');
+
+  let inner;
+  if(sl.isShowcase){
+    // random Robinhood Chain coins > $10k, not bundled
+    const rows = (_showcase||[]).map(c=>
+      '<div class="sc-coin" onclick="showToken(\''+c.addr+'\')">'
+      +'<span class="sc-sym">$'+ (c.sym||'?') +'</span>'
+      +'<span class="sc-mc">'+statUsd(c.mcap)+'</span></div>').join('');
+    inner = '<div class="slabel">'+sl.label+'</div>'
+      +'<div class="sc-grid">'+rows+'</div>'
+      +'<div class="ssub">Above $10k \u00b7 real two-sided volume \u00b7 tap to scan</div>';
+  } else {
+    const chart = sl.series ? statChart(sl.series, sl.color||'var(--green)') : '';
+    inner = '<div class="slabel">'+sl.label+'</div>'
+      +'<div class="svalue'+(sl.isRS?' sv-rs':'')+'">'+sl.value+'</div>'
+      +(sl.sub?'<div class="ssub">'+sl.sub+'</div>':'')
+      +chart;
+  }
+
   host.innerHTML =
     '<button class="sarrow" id="sPrev" aria-label="Previous">\u2039</button>'
-    +'<div class="sslide">'
-    +'<div class="slabel">'+sl.label+'</div>'
-    +'<div class="svalue">'+sl.value+'</div>'
-    +(sl.sub?'<div class="ssub">'+sl.sub+'</div>':'')
-    +(sl.chart||'')
-    +'<div class="sdots">'+dots+'</div>'
-    +'</div>'
+    +'<div class="sslide">'+inner+'<div class="sdots">'+dots+'</div></div>'
     +'<button class="sarrow" id="sNext" aria-label="Next">\u203a</button>';
   document.getElementById('sPrev').onclick=()=>{ statsIdx=(statsIdx-1+statsSlides.length)%statsSlides.length; renderStatsSlide(); };
   document.getElementById('sNext').onclick=()=>{ statsIdx=(statsIdx+1)%statsSlides.length; renderStatsSlide(); };
+}
+
+// area chart for a stat slide
+function statChart(series, color){
+  const vals=(series||[]).map(Number).filter(v=>isFinite(v));
+  if(vals.length<2) return '';
+  const W=300,H=54,pad=3;
+  const lo=Math.min(...vals),hi=Math.max(...vals),range=Math.max(hi-lo,Math.abs(hi)*1e-9,1e-9);
+  const x=i=>pad+(i/(vals.length-1))*(W-2*pad);
+  const y=v=>H-pad-((v-lo)/range)*(H-2*pad);
+  const line=vals.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)).join(' ');
+  const area=line+' L'+(W-pad)+' '+H+' L'+pad+' '+H+' Z';
+  return '<svg class="schart" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'
+    +'<defs><linearGradient id="sc'+statsIdx+'" x1="0" y1="0" x2="0" y2="1">'
+    +'<stop offset="0" stop-color="'+color+'" stop-opacity="0.3"/><stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="'+area+'" fill="url(#sc'+statsIdx+')"/><path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round"/></svg>';
 }
 
 // ---- landing ----

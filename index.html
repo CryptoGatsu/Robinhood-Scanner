@@ -253,6 +253,18 @@ body{margin:0;background:var(--bg);color:var(--fg);
   display:flex;align-items:center;justify-content:center;color:var(--fg-dim);transition:.14s}
 .soc:hover{color:var(--green);border-color:var(--green-dim);transform:translateY(-1px)}
 .soc svg{width:17px;height:17px}
+
+.tokscans{font-size:11.5px;color:var(--fg-dim);margin:4px 0 2px;font-family:var(--mono)}
+.tokscans span{color:var(--green);font-weight:700}
+.scan-toasts{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.scan-toast{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--green-dim);
+  border-radius:11px;padding:10px 14px;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transform:translateX(-12px);
+  transition:opacity .35s,transform .35s;cursor:pointer;pointer-events:auto;max-width:280px}
+.scan-toast.show{opacity:1;transform:none}
+.st-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:none}
+.st-t{font-size:12.5px;color:var(--fg)} .st-t b{color:var(--green)}
+.st-mc{font-size:11px;color:var(--fg-dim);font-family:var(--mono);margin-top:1px}
+@media(max-width:520px){.scan-toasts{left:10px;right:10px;bottom:10px} .scan-toast{max-width:none}}
 </style>
 </head>
 <body>
@@ -1770,21 +1782,85 @@ async function loadCounters() {
   } catch (e) {}
 }
 
-// called by run() after a successful scan starts
-async function bumpScan() {
+// called by run() after a successful scan starts; records token+sym+mcap
+async function bumpScan(token, sym, mcap) {
   try {
-    const r = await fetch(STATS_API + '?hit=scan', { method: 'POST' });
+    let q = STATS_API + '?hit=scan';
+    if (token) q += '&token=' + encodeURIComponent(token);
+    if (sym) q += '&sym=' + encodeURIComponent(sym);
+    if (mcap) q += '&mcap=' + encodeURIComponent(Math.round(mcap));
+    const r = await fetch(q, { method: 'POST' });
     const j = await r.json();
     const es = $('hsScans');
     if (es && j.scans != null) es.textContent = countFmt(j.scans);
+    return j.tokenScans;
+  } catch (e) { return null; }
+}
+
+// per-token scan count -> fills the token card slot
+async function loadTokenScans(token) {
+  try {
+    const r = await fetch(STATS_API + '?token=' + encodeURIComponent(token));
+    const j = await r.json();
+    const el = $('tokScanCount');
+    if (el && j.tokenScans != null) el.textContent = countFmt(j.tokenScans) + (j.tokenScans === 1 ? ' scan' : ' scans');
   } catch (e) {}
 }
+
+/* ---- live scan toast: poll the recent feed, toast newly-seen scans ---- */
+let _seenScans = {};
+let _feedFirst = true;
+async function pollScanFeed() {
+  try {
+    const r = await fetch(STATS_API + '?feed=1');
+    const j = await r.json();
+    const recent = (j && j.recent) || [];
+    // first poll: mark everything as seen (don't toast a backlog on load)
+    if (_feedFirst) {
+      recent.forEach(s => { _seenScans[s.token + s.ts] = true; });
+      _feedFirst = false;
+      return;
+    }
+    // toast anything new (oldest first so they stack naturally)
+    const fresh = recent.filter(s => !_seenScans[s.token + s.ts]).reverse();
+    for (const s of fresh) {
+      _seenScans[s.token + s.ts] = true;
+      showScanToast(s);
+    }
+  } catch (e) {}
+}
+
+function showScanToast(s) {
+  let host = $('scanToasts');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'scanToasts';
+    host.className = 'scan-toasts';
+    document.body.appendChild(host);
+  }
+  const mc = s.mcap ? statMoney(s.mcap) : null;
+  const el = document.createElement('div');
+  el.className = 'scan-toast';
+  el.innerHTML = '<div class="st-dot"></div>'
+    + '<div class="st-body"><div class="st-t">Someone scanned <b>' + (s.sym ? '$' + escStat(s.sym) : escStat(s.token.slice(0, 8) + '…')) + '</b></div>'
+    + (mc ? '<div class="st-mc">' + mc + ' mcap</div>' : '') + '</div>';
+  el.onclick = () => { location.href = '?token=' + s.token; };
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 5000);
+  // cap stack
+  while (host.children.length > 3) host.removeChild(host.firstChild);
+}
+function escStat(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function initSiteStats() {
   loadRobinscanStats();
   loadCounters();
   // refresh mcap/vol every 60s
   setInterval(loadRobinscanStats, 60000);
+  // live scan toast: poll the shared feed every 5s
+  pollScanFeed();
+  setInterval(pollScanFeed, 5000);
 }
 
 /* ================= scan orchestration + rendering ================= */
@@ -1822,7 +1898,6 @@ async function run() {
   SCANNING = true;
   hideErr(); clearLog(); $('result').innerHTML = '';
   const btn = $('scan'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Scanning\u2026';
-  bumpScan();
 
   try {
     // 1. identity + code (code read reused everywhere)
@@ -1952,6 +2027,12 @@ async function run() {
       } catch (e) {}
     })();
 
+    // 10. record the scan (global + per-token + live feed) with real mcap, then show the token's count
+    (async () => {
+      await bumpScan(addr, sym, mkt && mkt.mcap);
+      loadTokenScans(addr);
+    })();
+
   } catch (e) {
     showErr('<b>Scan hit an error.</b> ' + esc(String(e.message || e)));
   } finally {
@@ -2007,6 +2088,7 @@ function render(d) {
     + '<div><div class="tokname">' + esc(d.sym ? '$' + d.sym : (d.name || shortAddr(d.addr))) + '<span id="ogBadge"></span></div>'
     + '<div class="tokfull">' + esc(d.name || '') + '</div></div></div>'
     + '<div id="deployRow"></div>'
+    + '<div class="tokscans">Scanned <span id="tokScanCount">…</span> on RobinScan</div>'
     + '<div class="tokmeta">' + shortAddr(d.addr) + '</div>'
     + '<div class="toklinks">' + tlink('Explorer', SCOUT + '/token/' + d.addr)
     + tlink('DexScreener', 'https://dexscreener.com/robinhood/' + d.addr) + '</div></div>';
