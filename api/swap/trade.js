@@ -59,10 +59,12 @@ export default async function handler(req) {
     payload.tokenOutChainId = CHAIN_ID;
     // force the connected wallet as swapper — never trust a client-supplied one
     payload.swapper = address;
-    // Force CLASSIC routing. UniswapX routes are gasless off-chain ORDERS that
-    // must be POSTed to /order, not sent as transactions — a different flow.
-    // Restricting to CLASSIC guarantees /swap returns a signable transaction.
-    payload.routingPreference = 'CLASSIC';
+    // Restrict routing to the Uniswap AMM protocols (V2/V3/V4), which return a
+    // signable on-chain transaction. This EXCLUDES UniswapX, whose gasless
+    // off-chain orders must be POSTed to /order (a different flow we don't run).
+    // NOTE: routingPreference only accepts BEST_PRICE|FASTEST — it does NOT take
+    // "CLASSIC". Protocol restriction is done via the `protocols` array.
+    payload.protocols = ['V2', 'V3', 'V4'];
   }
   if (action === 'check_approval') {
     payload.chainId = CHAIN_ID;
