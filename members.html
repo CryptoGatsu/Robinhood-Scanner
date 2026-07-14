@@ -370,7 +370,6 @@ body.exploring .wrap{padding-bottom:64px}
     Members tools require holding $ROBINSCAN. Not affiliated with Robinhood Markets, Inc.
   </div>
 </div>
-<script src="/explorer.js"></script>
 <script>
 const TOKEN_CA='0xd3aF2D5d83Ff14Ed78Ce4ff9f8f98027B37cF47a';
 const THRESHOLD_LABEL='100,000';
@@ -977,9 +976,11 @@ async function showAddress(addr){
 
   const tabBody = () => document.getElementById('addrTabBody');
   const loadTab = async (tab) => {
+    if(!tabBody()) return;                 // view changed (e.g. navigated to a token) — bail
     tabBody().innerHTML = loading();
     if(tab==='txns'){
       const t = await proxySoft('/api/v2/addresses/'+addr+'/transactions');
+      if(!tabBody()) return;               // re-check after await
       const items = t && (t.items||t) || [];
       tabBody().innerHTML = items.length ? items.slice(0,25).map(tx=>{
         const ok=(tx.status==='ok'||tx.result==='success');
@@ -1000,6 +1001,7 @@ async function showAddress(addr){
         const t2 = await proxySoft('/api/v2/addresses/'+addr+'/tokens');
         items = t2 && (Array.isArray(t2)?t2:(t2.items||[])) || [];
       }
+      if(!tabBody()) return;
       tabBody().innerHTML = items.length ? items.slice(0,50).map(tb=>{
         // handle both {token:{...}, value} and a flat token object
         const tok = tb.token || tb || {};
@@ -1016,6 +1018,7 @@ async function showAddress(addr){
     } else if(tab==='transfers'){
       const t = await proxySoft('/api/v2/addresses/'+addr+'/token-transfers');
       const items = t && (t.items||t) || [];
+      if(!tabBody()) return;
       tabBody().innerHTML = items.length ? items.slice(0,25).map(tr=>{
         const tok=tr.token||{};
         return '<div class="exp-lrow" onclick="showTx(\''+(tr.tx_hash||tr.transaction_hash||'')+'\')">'

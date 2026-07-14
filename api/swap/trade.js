@@ -23,9 +23,9 @@ const ALLOWED_ACTIONS = { quote: '/quote', check_approval: '/check_approval', sw
 export default async function handler(req) {
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
-  // holder gate — same session check as the other members endpoints
-  const session = await readSession(req);
-  if (!session || !session.address) return json({ error: 'not_authorized' }, 401);
+  // holder gate — readSession returns the address STRING (or null), like the other endpoints
+  const address = await readSession(req);
+  if (!address) return json({ error: 'not_authorized' }, 401);
 
   const key = process.env.UNISWAP_TRADE_API_KEY;
   if (!key) return json({ error: 'swap_unconfigured', detail: 'UNISWAP_TRADE_API_KEY not set' }, 200);
@@ -46,11 +46,11 @@ export default async function handler(req) {
     payload.tokenInChainId = CHAIN_ID;
     payload.tokenOutChainId = CHAIN_ID;
     // force the connected wallet as swapper — never trust a client-supplied one
-    payload.swapper = session.address;
+    payload.swapper = address;
   }
   if (action === 'check_approval') {
     payload.chainId = CHAIN_ID;
-    payload.walletAddress = session.address;
+    payload.walletAddress = address;
   }
 
   try {
