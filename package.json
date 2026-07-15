@@ -1,9 +1,13 @@
 {
-  "name": "robinscan-api",
+  "name": "robinscan-server",
   "version": "1.0.0",
   "type": "module",
   "engines": { "node": ">=20" },
   "dependencies": {
-    "@vercel/kv": "^2.0.0"
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@vercel/kv": "^2.0.0",
+    "@vercel/og": "^0.6.2",
+    "jose": "^5.9.0"
   }
 }
