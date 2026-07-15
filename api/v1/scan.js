@@ -1,7 +1,7 @@
 import { guard, json, apiError, normalizeAddress, cacheGet, cacheSet } from '../../lib/apikit.js';
 import { getToken, getHolders, getDeployAndOG, getSafety, getSignal, getVerdict } from '../../lib/engine.js';
 
-export const config = { runtime: 'nodejs', maxDuration: 30 };
+export const config = { runtime: 'edge' };
 
 export default async function handler(req) {
   const g = await guard(req);
