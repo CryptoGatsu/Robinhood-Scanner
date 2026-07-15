@@ -23,9 +23,10 @@ export default async function handler(req) {
     if (!token.symbol && !token.name) return apiError('not_found', 'No token found at that address on Robinhood Chain.', 404);
 
     const hasPool = !!(liquidity && liquidity.usd);
-    // run the remaining pieces in parallel
+    // run the remaining pieces in parallel. getHolders needs the pool address so
+    // it can exclude the LP from concentration (the LP is not a whale).
     const [holders, og, safety] = await Promise.all([
-      getHolders(addr, token.totalSupply),
+      getHolders(addr, token.totalSupply, liquidity && liquidity.pool, holdersCount),
       getDeployAndOG(addr, token.symbol, market && market.pairCreatedAt),
       getSafety(addr, hasPool),
     ]);
@@ -42,10 +43,11 @@ export default async function handler(req) {
       verdict,
       safety,
       holders: {
-        count: holders.count || holdersCount || 0,
+        count: holders.count,
         top1Pct: holders.top1Pct, top10Pct: holders.top10Pct,
         creatorPct: null,
-        lpPct: liquidity && liquidity.pool ? lpPctOf(holders, liquidity.pool) : null,
+        lpPct: holders.lpPct,
+        burnedPct: holders.burnedPct,
         bundle: { detected: false, maxFunderPct: 0 },
         truncated: false,
       },
@@ -73,8 +75,3 @@ export default async function handler(req) {
   }
 }
 
-function lpPctOf(holders, pool) {
-  const p = String(pool).toLowerCase();
-  const lp = (holders.list || []).find(h => h.addr === p);
-  return lp ? lp.pct : null;
-}
