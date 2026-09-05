@@ -1,10 +1,10 @@
-# Faction Vaults — Product and Protocol Specification
+# Pennant — Product and Protocol Specification
 
-Working title. Version 0.1, 5 September 2026. Target chain: Robinhood Chain mainnet (chain id 4663).
+Version 0.1, 5 September 2026. Target chain: Robinhood Chain mainnet (chain id 4663).
 
 ## 1. Summary
 
-Faction Vaults is a prediction-paired coin protocol. Each series has a small set of permanent faction coins (for example $BULL and $BEAR). Every round, the factions face each other on a question that settles from data (for example: did BTC close the week up or down). Users join a faction by minting its coin at $1 USDG. The coins are always fully collateralized. At resolution, the round's pot streams to the winning faction's holders, weighted by how much and how long they held. Nobody loses principal. The pot is made of mint fees, early-exit penalties and the yield the pooled collateral earns in Morpho while it sits in the vault.
+Pennant is a prediction-paired coin protocol. Each series has a small set of permanent faction coins (for example $BULL and $BEAR). Every round, the factions face each other on a question that settles from data (for example: did BTC close the week up or down). Users join a faction by minting its coin at $1 USDG. The coins are always fully collateralized. At resolution, the round's pot streams to the winning faction's holders, weighted by how much and how long they held. Nobody loses principal. The pot is made of mint fees, early-exit penalties and the yield the pooled collateral earns in Morpho while it sits in the vault.
 
 The coins are never worth less than $1 and never more than $1. What changes is which coin earned this week, each faction's record, and the standings across the season. The product is the scoreboard, not the chart.
 
